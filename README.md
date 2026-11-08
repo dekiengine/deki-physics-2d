@@ -1,7 +1,7 @@
 # Deki Physics 2D
 
-2D physics for the Deki Engine, sized for microcontrollers: axis-aligned boxes
-and circles, no rotation, a fixed time step.
+2D physics for the Deki Engine, sized for microcontrollers: boxes and circles
+that move and turn, on a fixed time step.
 
 Part of [Deki Engine](https://github.com/dekiengine/deki-engine).
 
@@ -31,7 +31,6 @@ if (Raycast({ 0.0f, 0.0f }, { 0.0f, 10.0f }, hit, &what))
 
 ## Limits
 
-- Bodies do not rotate, and boxes stay axis-aligned.
 - A static collider stays where it was when it started.
 - A fast small body can pass through a thin wall in one step: there is no
   continuous collision. Raise the step rate or thicken the wall.

@@ -72,9 +72,12 @@ BodyHandle Rigidbody2D::EnsureBody()
     BodyDef def;
     def.type = type;
     def.position = { GetOwner()->GetWorldX(), GetOwner()->GetWorldY() };
+    def.angle = GetOwner()->GetWorldRotation();
     def.mass = mass;
     def.gravityScale = gravityScale;
     def.linearDamping = linearDamping;
+    def.angularDamping = angularDamping;
+    def.fixedRotation = freezeRotation;
     def.user = this;
     m_Body = s_World.CreateBody(def);
     s_Bodies.push_back(this);
@@ -111,7 +114,13 @@ void Rigidbody2D::Update()
         if (body->type != BodyType::Static && std::find(s_Bodies.begin(), s_Bodies.end(), body) != s_Bodies.end())
         {
             const Vec2 position = s_World.GetPosition(body->m_Body);
-            body->GetOwner()->SetWorldPosition(position.x, position.y);
+            Deki::Object* owner = body->GetOwner();
+            owner->SetWorldPosition(position.x, position.y);
+            if (!body->freezeRotation)
+            {
+                const Deki::Object* parent = owner->GetParent();
+                owner->SetRotation(s_World.GetAngle(body->m_Body) - (parent ? parent->GetWorldRotation() : 0.0f));
+            }
         }
     }
 }
@@ -124,6 +133,26 @@ Vec2 Rigidbody2D::GetVelocity() const
 void Rigidbody2D::SetVelocity(Vec2 velocity)
 {
     s_World.SetVelocity(EnsureBody(), velocity);
+}
+
+float Rigidbody2D::GetAngularVelocity() const
+{
+    return s_World.GetAngularVelocity(m_Body);
+}
+
+void Rigidbody2D::SetAngularVelocity(float radiansPerSecond)
+{
+    s_World.SetAngularVelocity(EnsureBody(), radiansPerSecond);
+}
+
+void Rigidbody2D::AddTorque(float torque)
+{
+    s_World.ApplyTorque(EnsureBody(), torque);
+}
+
+void Rigidbody2D::AddImpulseAt(Vec2 impulse, Vec2 worldPoint)
+{
+    s_World.ApplyImpulseAt(EnsureBody(), impulse, worldPoint);
 }
 
 void Rigidbody2D::AddForce(Vec2 force)
@@ -158,6 +187,7 @@ void Collider2D::Start()
         BodyDef def;
         def.type = BodyType::Static;
         def.position = { GetOwner()->GetWorldX(), GetOwner()->GetWorldY() };
+        def.angle = GetOwner()->GetWorldRotation();
         m_OwnStaticBody = s_World.CreateBody(def);
         body = m_OwnStaticBody;
     }

@@ -44,8 +44,8 @@ public:
     void Awake() override;
 };
 
-/// Makes an object move under physics. Without one, a collider is a static
-/// obstacle. Bodies do not rotate.
+/// Makes an object move and turn under physics. Without one, a collider is a
+/// static obstacle.
 DEKI_CATEGORY("Physics")
 DEKI_DISPLAY_NAME("Rigidbody 2D")
 DEKI_DESCRIPTION("Moves an object with gravity, forces and collisions.")
@@ -69,14 +69,27 @@ public:
     DEKI_TOOLTIP("The share of its speed it loses each second, as if moving through air or water.")
     float linearDamping = 0.0f;
 
+    DEKI_EXPORT
+    DEKI_TOOLTIP("The share of its spin it loses each second.")
+    float angularDamping = 0.0f;
+
+    DEKI_EXPORT
+    DEKI_TOOLTIP("Never turns, whatever hits it. Keeps a player upright. Costs a little less on a board.")
+    bool freezeRotation = false;
+
     ~Rigidbody2D() override;
     void Start() override;
     void Update() override;
 
     Vec2 GetVelocity() const;
     void SetVelocity(Vec2 velocity);
+    float GetAngularVelocity() const;
+    void SetAngularVelocity(float radiansPerSecond);
     void AddForce(Vec2 force);
+    void AddTorque(float torque);
     void AddImpulse(Vec2 impulse);
+    /// At a point in the world, so it turns the body unless aimed through its centre.
+    void AddImpulseAt(Vec2 impulse, Vec2 worldPoint);
 
     /// Called when a collider of this body starts or stops touching another
     /// object's. A body can be destroyed from inside these.
@@ -138,7 +151,7 @@ private:
 
 DEKI_CATEGORY("Physics")
 DEKI_DISPLAY_NAME("Box Collider 2D")
-DEKI_DESCRIPTION("A box-shaped collider that stays axis-aligned.")
+DEKI_DESCRIPTION("A box-shaped collider.")
 class DEKI_PHYSICS2D_API BoxCollider2D : public Collider2D
 {
 public:

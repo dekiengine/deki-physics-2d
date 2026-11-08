@@ -298,3 +298,104 @@ TEST(Physics2DWorld, AContactCallbackMayDestroyABody)
     Simulate(world, 2.0f);
     EXPECT_FALSE(world.IsValid(box));
 }
+
+// ---- rotation ------------------------------------------------------------
+
+TEST(Physics2DWorld, AnImpulseOffCentreSpinsABody)
+{
+    TestWorld world;
+    world.gravity = {};
+    BodyHandle box = AddBox(world, BodyType::Dynamic, { 0.0f, 0.0f });
+    world.ApplyImpulseAt(box, { 0.0f, 1.0f }, { 0.5f, 0.0f });
+    EXPECT_GT(world.GetAngularVelocity(box), 0.0f) << "a push up on the right turns it counter-clockwise";
+    Simulate(world, 0.5f);
+    EXPECT_GT(world.GetAngle(box), 0.1f);
+}
+
+TEST(Physics2DWorld, FixedRotationNeverTurns)
+{
+    TestWorld world;
+    world.gravity = {};
+    BodyDef def;
+    def.fixedRotation = true;
+    BodyHandle box = world.CreateBody(def);
+    world.AddShape(box, ShapeDef{});
+    world.ApplyImpulseAt(box, { 0.0f, 1.0f }, { 0.5f, 0.0f });
+    world.ApplyTorque(box, 100.0f);
+    Simulate(world, 0.5f);
+    EXPECT_FLOAT_EQ(world.GetAngle(box), 0.0f);
+}
+
+TEST(Physics2DWorld, ABoxOffALedgeTipsOver)
+{
+    TestWorld world;
+    // Its centre is past the ledge's right edge (+Y is down here).
+    BodyHandle box = AddBox(world, BodyType::Dynamic, { 1.3f, 3.9f });
+    AddBox(world, BodyType::Static, { 0.0f, 5.0f }, 1.0f, 0.5f);
+    Simulate(world, 2.0f);
+    EXPECT_GT(std::fabs(world.GetAngle(box)), 0.3f) << "unsupported on one side, it turned";
+    EXPECT_GT(world.GetPosition(box).y, 5.0f) << "and fell past the ledge";
+}
+
+TEST(Physics2DWorld, ATiltedBoxSettlesFlatOnTheGround)
+{
+    TestWorld world;
+    BodyDef def;
+    def.position = { 0.0f, 2.0f };
+    def.angle = 0.5f;
+    BodyHandle box = world.CreateBody(def);
+    world.AddShape(box, ShapeDef{});
+    AddBox(world, BodyType::Static, { 0.0f, 5.0f }, 20.0f, 0.5f);
+    Simulate(world, 5.0f);
+
+    const float quarter = 3.14159265f / 2.0f;
+    const float remainder = std::fabs(std::remainder(world.GetAngle(box), quarter));
+    EXPECT_LT(remainder, 0.05f) << "a face is on the ground";
+    EXPECT_NEAR(world.GetPosition(box).y, 4.0f, 0.05f);
+    EXPECT_LT(std::fabs(world.GetAngularVelocity(box)), 0.2f) << "it has stopped rocking";
+}
+
+TEST(Physics2DWorld, ACircleRollsDownASlope)
+{
+    TestWorld world;
+    BodyDef slope;
+    slope.type = BodyType::Static;
+    slope.position = { 0.0f, 5.0f };
+    slope.angle = 0.3f;  // lower on the right with +Y down
+    BodyHandle ramp = world.CreateBody(slope);
+    ShapeDef surface;
+    surface.halfWidth = 20.0f;
+    surface.halfHeight = 0.5f;
+    surface.friction = 1.0f;
+    world.AddShape(ramp, surface);
+
+    BodyDef def;
+    def.position = { 0.0f, 3.5f };
+    BodyHandle ball = world.CreateBody(def);
+    ShapeDef shape;
+    shape.isCircle = true;
+    shape.radius = 0.5f;
+    shape.friction = 1.0f;
+    world.AddShape(ball, shape);
+
+    Simulate(world, 2.0f);
+    EXPECT_GT(world.GetPosition(ball).x, 1.0f) << "down the slope";
+    EXPECT_GT(std::fabs(world.GetAngularVelocity(ball)), 1.0f) << "and turning as it goes";
+}
+
+TEST(Physics2DWorld, RaycastHitsATurnedBox)
+{
+    TestWorld world;
+    world.gravity = {};
+    BodyDef def;
+    def.type = BodyType::Static;
+    def.position = { 5.0f, 0.0f };
+    def.angle = 3.14159265f / 4.0f;
+    BodyHandle box = world.CreateBody(def);
+    world.AddShape(box, ShapeDef{});
+
+    RayHit hit;
+    ASSERT_TRUE(world.Raycast({ 0.0f, 0.0f }, { 10.0f, 0.0f }, hit));
+    EXPECT_NEAR(hit.point.x, 5.0f - std::sqrt(0.5f), 0.01f) << "the corner points at the ray";
+    EXPECT_FALSE(world.Raycast({ 0.0f, 0.75f }, { 10.0f, 0.75f }, hit)) << "beyond the corner";
+}
