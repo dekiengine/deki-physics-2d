@@ -128,8 +128,6 @@ public:
     /// Called from Step, after the step that started or ended the contact.
     std::function<void(const Contact&)> onContactBegin;
     std::function<void(const Contact&)> onContactEnd;
-    /// Every step the shapes go on touching. Empty costs nothing.
-    std::function<void(const Contact&)> onContactStay;
 
     size_t BodyCount() const { return m_LiveBodies; }
     size_t ShapeCount() const { return m_LiveShapes; }

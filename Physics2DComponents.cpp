@@ -63,14 +63,6 @@ void InstallContactCallbacks()
             Tell<&Rigidbody2D::onCollisionEnd>(contact.bodyB, contact.shapeA);
         }
     };
-    s_World.onContactStay = [](const Contact& contact)
-    {
-        if (contact.trigger)
-        {
-            Tell<&Rigidbody2D::onTriggerStay>(contact.bodyA, contact.shapeB);
-            Tell<&Rigidbody2D::onTriggerStay>(contact.bodyB, contact.shapeA);
-        }
-    };
 }
 
 }  // namespace

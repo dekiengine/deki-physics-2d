@@ -400,7 +400,7 @@ TEST(Physics2DWorld, RaycastHitsATurnedBox)
     EXPECT_FALSE(world.Raycast({ 0.0f, 0.75f }, { 10.0f, 0.75f }, hit)) << "beyond the corner";
 }
 
-TEST(Physics2DWorld, ATriggerReportsEveryStepInsideAndSaysItIsATrigger)
+TEST(Physics2DWorld, ATriggerContactSaysItIsATrigger)
 {
     TestWorld world;
     world.gravity = {};
@@ -412,17 +412,15 @@ TEST(Physics2DWorld, ATriggerReportsEveryStepInsideAndSaysItIsATrigger)
     trigger.trigger = true;
     world.AddShape(zone, trigger);
 
-    int began = 0, stayed = 0;
+    int began = 0;
     bool wasTrigger = false;
     world.onContactBegin = [&](const Contact& contact)
     {
         ++began;
         wasTrigger = contact.trigger;
     };
-    world.onContactStay = [&](const Contact&) { ++stayed; };
     (void)box;
     Simulate(world, 1.0f);
     EXPECT_EQ(began, 1);
     EXPECT_TRUE(wasTrigger);
-    EXPECT_EQ(stayed, 59) << "every step after the first";
 }

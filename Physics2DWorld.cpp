@@ -898,10 +898,6 @@ void World::ReportContacts()
         }
         else
         {
-            if (onContactStay)
-            {
-                report(now[i], onContactStay);
-            }
             ++i;
             ++k;
         }

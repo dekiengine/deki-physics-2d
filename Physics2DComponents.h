@@ -100,9 +100,6 @@ public:
     std::function<void(Deki::Object* other)> onTriggerBegin;
     std::function<void(Deki::Object* other)> onTriggerEnd;
 
-    /// Every physics step while inside a trigger, not every frame.
-    std::function<void(Deki::Object* other)> onTriggerStay;
-
     /// The body in the world, made on first use, as colliders may start first.
     BodyHandle EnsureBody();
 
