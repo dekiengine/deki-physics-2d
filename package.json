@@ -1,0 +1,25 @@
+{
+  "id": "deki-physics-2d",
+  "displayName": "Physics 2D",
+  "minEngine": "0.30.0",
+  "tags": [
+    "transform_2d"
+  ],
+  "buildDefine": "DEKI_PACKAGE_PHYSICS_2D",
+  "requires": [],
+  "features": [
+    {
+      "id": "physics",
+      "displayName": "Physics 2D",
+      "buildDefine": "DEKI_FEATURE_PHYSICS_2D",
+      "defaultEnabled": true,
+      "componentTypes": [
+        "Physics2DSettings",
+        "Rigidbody2D",
+        "BoxCollider2D",
+        "CircleCollider2D"
+      ]
+    }
+  ],
+  "dependencies": {}
+}
