@@ -12,5 +12,5 @@ alongside one that has them.
 
 ### Added
 - The package: rigid bodies that move and turn, box and circle colliders,
-  triggers, layers, raycasts and contact callbacks, on a fixed step so a game plays the same at
+  triggers, layers, raycasts and collision and trigger callbacks, on a fixed step so a game plays the same at
   any frame rate.

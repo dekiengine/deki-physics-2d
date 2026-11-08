@@ -45,7 +45,7 @@ struct BodyDef
     float gravityScale = 1.0f;
     float linearDamping = 0.0f;   // fraction of speed lost per second
     float angularDamping = 0.0f;  // fraction of spin lost per second
-    bool fixedRotation = false;   // never turns, whatever hits it
+    bool freezeRotation = false;   // never turns, whatever hits it
     void* user = nullptr;
 };
 
@@ -57,7 +57,7 @@ struct ShapeDef
     float halfHeight = 0.5f;   // a box
     float radius = 0.5f;       // a circle
     float friction = 0.3f;     // 0: ice, 1: rubber
-    float restitution = 0.0f;  // 0: no bounce, 1: keeps all its speed
+    float bounciness = 0.0f;  // 0: no bounce, 1: keeps all its speed
     bool trigger = false;      // reports contacts, pushes nothing
     uint16_t layer = 1;        // the layer bit this shape is on
     uint16_t mask = 0xFFFF;    // the layers it collides with; both sides must agree
@@ -70,6 +70,7 @@ struct Contact
     ShapeHandle shapeB;
     BodyHandle bodyA;
     BodyHandle bodyB;
+    bool trigger = false;  // either shape is a trigger
 };
 
 struct RayHit
@@ -111,10 +112,10 @@ public:
     void SetVelocity(BodyHandle body, Vec2 velocity);
     float GetAngularVelocity(BodyHandle body) const;
     void SetAngularVelocity(BodyHandle body, float radiansPerSecond);
-    void ApplyForce(BodyHandle body, Vec2 force);      // until the next step
-    void ApplyTorque(BodyHandle body, float torque);   // until the next step
-    void ApplyImpulse(BodyHandle body, Vec2 impulse);  // now, through the centre
-    void ApplyImpulseAt(BodyHandle body, Vec2 impulse, Vec2 worldPoint);  // now; turns it unless at the centre
+    void AddForce(BodyHandle body, Vec2 force);      // until the next step
+    void AddTorque(BodyHandle body, float torque);   // until the next step
+    void AddImpulse(BodyHandle body, Vec2 impulse);  // now, through the centre
+    void AddImpulseAt(BodyHandle body, Vec2 impulse, Vec2 worldPoint);  // now; turns it unless at the centre
     void* GetBodyUser(BodyHandle body) const;
     void* GetShapeUser(ShapeHandle shape) const;
 
@@ -127,6 +128,8 @@ public:
     /// Called from Step, after the step that started or ended the contact.
     std::function<void(const Contact&)> onContactBegin;
     std::function<void(const Contact&)> onContactEnd;
+    /// Every step the shapes go on touching. Empty costs nothing.
+    std::function<void(const Contact&)> onContactStay;
 
     size_t BodyCount() const { return m_LiveBodies; }
     size_t ShapeCount() const { return m_LiveShapes; }
@@ -149,7 +152,7 @@ private:
         float linearDamping = 0.0f;
         float angularDamping = 0.0f;
         BodyType type = BodyType::Dynamic;
-        bool fixedRotation = false;
+        bool freezeRotation = false;
         void* user = nullptr;
         uint32_t generation = 1;
         bool alive = false;
@@ -200,6 +203,7 @@ private:
     void CorrectPositions();
     void FixedStep();
     void ReportContacts();
+    Contact MakeContact(uint32_t shapeA, uint32_t shapeB) const;
 
     std::vector<Body> m_Bodies;
     std::vector<Shape> m_Shapes;

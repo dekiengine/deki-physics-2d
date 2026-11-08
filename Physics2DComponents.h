@@ -91,10 +91,17 @@ public:
     /// At a point in the world, so it turns the body unless aimed through its centre.
     void AddImpulseAt(Vec2 impulse, Vec2 worldPoint);
 
-    /// Called when a collider of this body starts or stops touching another
-    /// object's. A body can be destroyed from inside these.
-    std::function<void(Deki::Object* other)> onContactBegin;
-    std::function<void(Deki::Object* other)> onContactEnd;
+    /// A collider of this body started or stopped hitting another object's.
+    /// A body can be destroyed from inside any of these.
+    std::function<void(Deki::Object* other)> onCollisionBegin;
+    std::function<void(Deki::Object* other)> onCollisionEnd;
+
+    /// The same, when either collider is a trigger.
+    std::function<void(Deki::Object* other)> onTriggerBegin;
+    std::function<void(Deki::Object* other)> onTriggerEnd;
+
+    /// Every physics step while inside a trigger, not every frame.
+    std::function<void(Deki::Object* other)> onTriggerStay;
 
     /// The body in the world, made on first use, as colliders may start first.
     BodyHandle EnsureBody();
@@ -123,7 +130,7 @@ public:
     DEKI_EXPORT
     DEKI_TOOLTIP("Bounciness: 0 stops dead, 1 keeps all its speed.")
     DEKI_RANGE(0, 1)
-    float restitution = 0.0f;
+    float bounciness = 0.0f;
 
     DEKI_EXPORT
     DEKI_TOOLTIP("Reports contacts without blocking anything: a trigger zone or a pickup.")

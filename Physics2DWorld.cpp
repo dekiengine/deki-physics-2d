@@ -90,7 +90,7 @@ BodyHandle World::CreateBody(const BodyDef& def)
     body.gravityScale = def.gravityScale;
     body.linearDamping = def.linearDamping;
     body.angularDamping = def.angularDamping;
-    body.fixedRotation = def.fixedRotation;
+    body.freezeRotation = def.freezeRotation;
     body.type = def.type;
     body.user = def.user;
     body.alive = true;
@@ -187,12 +187,7 @@ void World::RemoveShape(ShapeHandle handle)
             const uint32_t b = static_cast<uint32_t>(key);
             if (a == handle.index || b == handle.index)
             {
-                const Shape& sa = m_Shapes[a];
-                const Shape& sb = m_Shapes[b];
-                onContactEnd({ { a, sa.generation },
-                               { b, sb.generation },
-                               { sa.body, m_Bodies[sa.body].generation },
-                               { sb.body, m_Bodies[sb.body].generation } });
+                onContactEnd(MakeContact(a, b));
             }
         }
     }
@@ -218,7 +213,7 @@ void World::RefreshMassData(uint32_t bodyIndex)
 {
     Body& body = m_Bodies[bodyIndex];
     body.invInertia = 0.0f;
-    if (body.type != BodyType::Dynamic || body.fixedRotation || body.invMass <= 0.0f)
+    if (body.type != BodyType::Dynamic || body.freezeRotation || body.invMass <= 0.0f)
     {
         return;
     }
@@ -294,13 +289,13 @@ float World::GetAngularVelocity(BodyHandle handle) const
 void World::SetAngularVelocity(BodyHandle handle, float radiansPerSecond)
 {
     Body* body = Find(handle);
-    if (body && body->type != BodyType::Static && !body->fixedRotation)
+    if (body && body->type != BodyType::Static && !body->freezeRotation)
     {
         body->angularVelocity = radiansPerSecond;
     }
 }
 
-void World::ApplyTorque(BodyHandle handle, float torque)
+void World::AddTorque(BodyHandle handle, float torque)
 {
     if (Body* body = Find(handle))
     {
@@ -308,7 +303,7 @@ void World::ApplyTorque(BodyHandle handle, float torque)
     }
 }
 
-void World::ApplyImpulseAt(BodyHandle handle, Vec2 impulse, Vec2 worldPoint)
+void World::AddImpulseAt(BodyHandle handle, Vec2 impulse, Vec2 worldPoint)
 {
     if (Body* body = Find(handle))
     {
@@ -332,7 +327,7 @@ void World::SetVelocity(BodyHandle handle, Vec2 velocity)
     }
 }
 
-void World::ApplyForce(BodyHandle handle, Vec2 force)
+void World::AddForce(BodyHandle handle, Vec2 force)
 {
     if (Body* body = Find(handle))
     {
@@ -341,7 +336,7 @@ void World::ApplyForce(BodyHandle handle, Vec2 force)
     }
 }
 
-void World::ApplyImpulse(BodyHandle handle, Vec2 impulse)
+void World::AddImpulse(BodyHandle handle, Vec2 impulse)
 {
     if (Body* body = Find(handle))
     {
@@ -617,7 +612,7 @@ void World::PrepareContact(Manifold& contact)
     const Body& a = m_Bodies[sa.body];
     const Body& b = m_Bodies[sb.body];
     const Vec2 tangent = { -contact.normal.y, contact.normal.x };
-    const float restitution = std::max(sa.def.restitution, sb.def.restitution);
+    const float bounciness = std::max(sa.def.bounciness, sb.def.bounciness);
 
     for (int i = 0; i < contact.pointCount; ++i)
     {
@@ -636,7 +631,7 @@ void World::PrepareContact(Manifold& contact)
         const Vec2 va = Add(a.velocity, Perp(a.angularVelocity, point.toA));
         const Vec2 vb = Add(b.velocity, Perp(b.angularVelocity, point.toB));
         const float along = Dot(Sub(vb, va), contact.normal);
-        point.bounce = -along > kBounceThreshold ? -restitution * along : 0.0f;
+        point.bounce = -along > kBounceThreshold ? -bounciness * along : 0.0f;
     }
 }
 
@@ -862,6 +857,17 @@ void World::FixedStep()
     ReportContacts();
 }
 
+Contact World::MakeContact(uint32_t shapeA, uint32_t shapeB) const
+{
+    const Shape& sa = m_Shapes[shapeA];
+    const Shape& sb = m_Shapes[shapeB];
+    return { { shapeA, sa.generation },
+             { shapeB, sb.generation },
+             { sa.body, m_Bodies[sa.body].generation },
+             { sb.body, m_Bodies[sb.body].generation },
+             sa.def.trigger || sb.def.trigger };
+}
+
 void World::ReportContacts()
 {
     std::sort(m_Touching.begin(), m_Touching.end());
@@ -869,14 +875,9 @@ void World::ReportContacts()
     {
         const uint32_t a = static_cast<uint32_t>(key >> 32);
         const uint32_t b = static_cast<uint32_t>(key);
-        const Shape& sa = m_Shapes[a];
-        const Shape& sb = m_Shapes[b];
-        if (sa.alive && sb.alive && callback)
+        if (m_Shapes[a].alive && m_Shapes[b].alive && callback)
         {
-            callback({ { a, sa.generation },
-                       { b, sb.generation },
-                       { sa.body, m_Bodies[sa.body].generation },
-                       { sb.body, m_Bodies[sb.body].generation } });
+            callback(MakeContact(a, b));
         }
     };
 
@@ -897,6 +898,10 @@ void World::ReportContacts()
         }
         else
         {
+            if (onContactStay)
+            {
+                report(now[i], onContactStay);
+            }
             ++i;
             ++k;
         }

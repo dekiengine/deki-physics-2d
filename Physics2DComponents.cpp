@@ -39,13 +39,37 @@ void InstallContactCallbacks()
     }
     s_World.onContactBegin = [](const Contact& contact)
     {
-        Tell<&Rigidbody2D::onContactBegin>(contact.bodyA, contact.shapeB);
-        Tell<&Rigidbody2D::onContactBegin>(contact.bodyB, contact.shapeA);
+        if (contact.trigger)
+        {
+            Tell<&Rigidbody2D::onTriggerBegin>(contact.bodyA, contact.shapeB);
+            Tell<&Rigidbody2D::onTriggerBegin>(contact.bodyB, contact.shapeA);
+        }
+        else
+        {
+            Tell<&Rigidbody2D::onCollisionBegin>(contact.bodyA, contact.shapeB);
+            Tell<&Rigidbody2D::onCollisionBegin>(contact.bodyB, contact.shapeA);
+        }
     };
     s_World.onContactEnd = [](const Contact& contact)
     {
-        Tell<&Rigidbody2D::onContactEnd>(contact.bodyA, contact.shapeB);
-        Tell<&Rigidbody2D::onContactEnd>(contact.bodyB, contact.shapeA);
+        if (contact.trigger)
+        {
+            Tell<&Rigidbody2D::onTriggerEnd>(contact.bodyA, contact.shapeB);
+            Tell<&Rigidbody2D::onTriggerEnd>(contact.bodyB, contact.shapeA);
+        }
+        else
+        {
+            Tell<&Rigidbody2D::onCollisionEnd>(contact.bodyA, contact.shapeB);
+            Tell<&Rigidbody2D::onCollisionEnd>(contact.bodyB, contact.shapeA);
+        }
+    };
+    s_World.onContactStay = [](const Contact& contact)
+    {
+        if (contact.trigger)
+        {
+            Tell<&Rigidbody2D::onTriggerStay>(contact.bodyA, contact.shapeB);
+            Tell<&Rigidbody2D::onTriggerStay>(contact.bodyB, contact.shapeA);
+        }
     };
 }
 
@@ -77,7 +101,7 @@ BodyHandle Rigidbody2D::EnsureBody()
     def.gravityScale = gravityScale;
     def.linearDamping = linearDamping;
     def.angularDamping = angularDamping;
-    def.fixedRotation = freezeRotation;
+    def.freezeRotation = freezeRotation;
     def.user = this;
     m_Body = s_World.CreateBody(def);
     s_Bodies.push_back(this);
@@ -147,22 +171,22 @@ void Rigidbody2D::SetAngularVelocity(float radiansPerSecond)
 
 void Rigidbody2D::AddTorque(float torque)
 {
-    s_World.ApplyTorque(EnsureBody(), torque);
+    s_World.AddTorque(EnsureBody(), torque);
 }
 
 void Rigidbody2D::AddImpulseAt(Vec2 impulse, Vec2 worldPoint)
 {
-    s_World.ApplyImpulseAt(EnsureBody(), impulse, worldPoint);
+    s_World.AddImpulseAt(EnsureBody(), impulse, worldPoint);
 }
 
 void Rigidbody2D::AddForce(Vec2 force)
 {
-    s_World.ApplyForce(EnsureBody(), force);
+    s_World.AddForce(EnsureBody(), force);
 }
 
 void Rigidbody2D::AddImpulse(Vec2 impulse)
 {
-    s_World.ApplyImpulse(EnsureBody(), impulse);
+    s_World.AddImpulse(EnsureBody(), impulse);
 }
 
 void Collider2D::Start()
@@ -171,7 +195,7 @@ void Collider2D::Start()
     FillShape(shape);
     shape.offset = { offsetX, offsetY };
     shape.friction = friction;
-    shape.restitution = restitution;
+    shape.bounciness = bounciness;
     shape.trigger = isTrigger;
     shape.layer = static_cast<uint16_t>(layer);
     shape.mask = static_cast<uint16_t>(mask);

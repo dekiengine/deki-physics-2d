@@ -19,7 +19,8 @@ using namespace DekiPhysics2D;
 
 auto* body = GetOwner()->GetComponent<Rigidbody2D>();
 body->AddImpulse({ 0.0f, 5.0f });
-body->onContactBegin = [](Deki::Object* other) { /* landed on, or hit, other */ };
+body->onCollisionBegin = [](Deki::Object* other) { /* landed on, or hit, other */ };
+body->onTriggerBegin = [](Deki::Object* other) { /* entered a trigger area */ };
 
 RayHit hit;
 Deki::Object* what = nullptr;

@@ -20,7 +20,7 @@ struct TestWorld : World
 };
 
 BodyHandle AddBox(World& world, BodyType type, Vec2 position, float halfWidth = 0.5f, float halfHeight = 0.5f,
-                  float restitution = 0.0f)
+                  float bounciness = 0.0f)
 {
     BodyDef body;
     body.type = type;
@@ -29,7 +29,7 @@ BodyHandle AddBox(World& world, BodyType type, Vec2 position, float halfWidth = 
     ShapeDef shape;
     shape.halfWidth = halfWidth;
     shape.halfHeight = halfHeight;
-    shape.restitution = restitution;
+    shape.bounciness = bounciness;
     world.AddShape(handle, shape);
     return handle;
 }
@@ -306,7 +306,7 @@ TEST(Physics2DWorld, AnImpulseOffCentreSpinsABody)
     TestWorld world;
     world.gravity = {};
     BodyHandle box = AddBox(world, BodyType::Dynamic, { 0.0f, 0.0f });
-    world.ApplyImpulseAt(box, { 0.0f, 1.0f }, { 0.5f, 0.0f });
+    world.AddImpulseAt(box, { 0.0f, 1.0f }, { 0.5f, 0.0f });
     EXPECT_GT(world.GetAngularVelocity(box), 0.0f) << "a push up on the right turns it counter-clockwise";
     Simulate(world, 0.5f);
     EXPECT_GT(world.GetAngle(box), 0.1f);
@@ -317,11 +317,11 @@ TEST(Physics2DWorld, FixedRotationNeverTurns)
     TestWorld world;
     world.gravity = {};
     BodyDef def;
-    def.fixedRotation = true;
+    def.freezeRotation = true;
     BodyHandle box = world.CreateBody(def);
     world.AddShape(box, ShapeDef{});
-    world.ApplyImpulseAt(box, { 0.0f, 1.0f }, { 0.5f, 0.0f });
-    world.ApplyTorque(box, 100.0f);
+    world.AddImpulseAt(box, { 0.0f, 1.0f }, { 0.5f, 0.0f });
+    world.AddTorque(box, 100.0f);
     Simulate(world, 0.5f);
     EXPECT_FLOAT_EQ(world.GetAngle(box), 0.0f);
 }
@@ -398,4 +398,31 @@ TEST(Physics2DWorld, RaycastHitsATurnedBox)
     ASSERT_TRUE(world.Raycast({ 0.0f, 0.0f }, { 10.0f, 0.0f }, hit));
     EXPECT_NEAR(hit.point.x, 5.0f - std::sqrt(0.5f), 0.01f) << "the corner points at the ray";
     EXPECT_FALSE(world.Raycast({ 0.0f, 0.75f }, { 10.0f, 0.75f }, hit)) << "beyond the corner";
+}
+
+TEST(Physics2DWorld, ATriggerReportsEveryStepInsideAndSaysItIsATrigger)
+{
+    TestWorld world;
+    world.gravity = {};
+    BodyHandle box = AddBox(world, BodyType::Dynamic, { 0.0f, 0.0f });
+    BodyDef zoneDef;
+    zoneDef.type = BodyType::Static;
+    BodyHandle zone = world.CreateBody(zoneDef);
+    ShapeDef trigger;
+    trigger.trigger = true;
+    world.AddShape(zone, trigger);
+
+    int began = 0, stayed = 0;
+    bool wasTrigger = false;
+    world.onContactBegin = [&](const Contact& contact)
+    {
+        ++began;
+        wasTrigger = contact.trigger;
+    };
+    world.onContactStay = [&](const Contact&) { ++stayed; };
+    (void)box;
+    Simulate(world, 1.0f);
+    EXPECT_EQ(began, 1);
+    EXPECT_TRUE(wasTrigger);
+    EXPECT_EQ(stayed, 59) << "every step after the first";
 }
