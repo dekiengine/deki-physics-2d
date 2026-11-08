@@ -114,7 +114,7 @@ public:
 
     DEKI_EXPORT
     DEKI_TOOLTIP("Reports contacts without blocking anything: a trigger zone or a pickup.")
-    bool isSensor = false;
+    bool isTrigger = false;
 
     DEKI_EXPORT
     DEKI_TOOLTIP("The layer bits this collider is on.")

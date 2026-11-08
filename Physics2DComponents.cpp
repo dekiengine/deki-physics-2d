@@ -143,7 +143,7 @@ void Collider2D::Start()
     shape.offset = { offsetX, offsetY };
     shape.friction = friction;
     shape.restitution = restitution;
-    shape.sensor = isSensor;
+    shape.trigger = isTrigger;
     shape.layer = static_cast<uint16_t>(layer);
     shape.mask = static_cast<uint16_t>(mask);
     shape.user = this;

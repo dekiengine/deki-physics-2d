@@ -191,7 +191,7 @@ TEST(Physics2DWorld, KinematicPushesAndIsNotPushed)
     EXPECT_GT(world.GetPosition(box).x, 3.5f);
 }
 
-TEST(Physics2DWorld, ASensorReportsAndPushesNothing)
+TEST(Physics2DWorld, ATriggerReportsAndPushesNothing)
 {
     TestWorld world;
     world.gravity = {};
@@ -202,9 +202,9 @@ TEST(Physics2DWorld, ASensorReportsAndPushesNothing)
     zoneDef.type = BodyType::Static;
     zoneDef.position = { 3.0f, 0.0f };
     BodyHandle zone = world.CreateBody(zoneDef);
-    ShapeDef sensor;
-    sensor.sensor = true;
-    world.AddShape(zone, sensor);
+    ShapeDef trigger;
+    trigger.trigger = true;
+    world.AddShape(zone, trigger);
 
     int began = 0;
     int ended = 0;

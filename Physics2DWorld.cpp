@@ -448,7 +448,7 @@ void World::FixedStep()
                 continue;
             }
             const bool bothFixed = m_Bodies[sa.body].type != BodyType::Dynamic && m_Bodies[sb.body].type != BodyType::Dynamic;
-            if (bothFixed && !sa.def.sensor && !sb.def.sensor)
+            if (bothFixed && !sa.def.trigger && !sb.def.trigger)
             {
                 continue;
             }
@@ -463,7 +463,7 @@ void World::FixedStep()
                 continue;
             }
             m_Touching.push_back(PairKey(a, b));
-            if (!sa.def.sensor && !sb.def.sensor)
+            if (!sa.def.trigger && !sb.def.trigger)
             {
                 m_Manifolds.push_back(manifold);
             }
@@ -580,7 +580,7 @@ bool World::Raycast(Vec2 from, Vec2 to, RayHit& hit, uint16_t mask) const
     for (uint32_t index : m_Sweep)
     {
         const Shape& shape = m_Shapes[index];
-        if (!(shape.def.layer & mask) || shape.def.sensor)
+        if (!(shape.def.layer & mask) || shape.def.trigger)
         {
             continue;
         }

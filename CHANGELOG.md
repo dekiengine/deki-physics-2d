@@ -11,6 +11,6 @@ alongside one that has them.
 ## Unreleased
 
 ### Added
-- The package: rigid bodies, box and circle colliders, sensors, layers,
+- The package: rigid bodies, box and circle colliders, triggers, layers,
   raycasts and contact callbacks, on a fixed step so a game plays the same at
   any frame rate.

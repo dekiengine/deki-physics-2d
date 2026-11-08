@@ -54,7 +54,7 @@ struct ShapeDef
     float radius = 0.5f;       // a circle
     float friction = 0.3f;     // 0: ice, 1: rubber
     float restitution = 0.0f;  // 0: no bounce, 1: keeps all its speed
-    bool sensor = false;       // reports contacts, pushes nothing
+    bool trigger = false;       // reports contacts, pushes nothing
     uint16_t layer = 1;        // the layer bit this shape is on
     uint16_t mask = 0xFFFF;    // the layers it collides with; both sides must agree
     void* user = nullptr;
