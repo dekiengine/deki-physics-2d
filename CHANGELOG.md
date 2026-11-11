@@ -11,6 +11,18 @@ alongside one that has them.
 ## Unreleased
 
 ### Added
-- The package: rigid bodies that move and turn, box and circle colliders,
-  triggers, layers, raycasts and collision and trigger callbacks, on a fixed step so a game plays the same at
-  any frame rate.
+- The package: rigid bodies that move and turn, box, circle, capsule and convex
+  polygon colliders, triggers, layers, raycasts and collision and trigger
+  callbacks, on a fixed step so a game plays the same at any frame rate.
+- A body falls, balances and spins about the centre of its colliders, wherever
+  its object's origin is.
+- Hinge joints with limits and a motor, and distance joints and ropes.
+- Bodies at rest sleep, with everything touching them, until something wakes
+  them.
+- Fast bodies stop at what they would otherwise jump over in one step.
+- A collider with no Rigidbody 2D follows its object, and a body follows an
+  object that other code moves.
+- Nothing is allocated while a scene runs, once its lists have reached their
+  size.
+- Colliders and joints are drawn in the Scene View, with handles to drag a
+  selected collider's size and corners.

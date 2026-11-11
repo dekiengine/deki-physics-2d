@@ -17,7 +17,11 @@
         "Physics2DSettings",
         "Rigidbody2D",
         "BoxCollider2D",
-        "CircleCollider2D"
+        "CircleCollider2D",
+        "CapsuleCollider2D",
+        "PolygonCollider2D",
+        "HingeJoint2D",
+        "DistanceJoint2D"
       ]
     }
   ],
