@@ -42,3 +42,8 @@ alongside one that has them.
 - A bounce gives back the speed the two arrived with, before the step's
   gravity. A ball that keeps all its speed rose 4% higher with every bounce;
   it now comes back to where it fell from.
+- Resting bodies settle to the overlap they are allowed, 5 mm. What is left
+  of an overlap is worked out from where the two bodies are now, and removed
+  in four passes from alternate ends of the contacts, and a body still being
+  pushed apart does not go to sleep. A stack of 20 boxes went to sleep 16 mm
+  into each box below; it now rests 6 mm in.

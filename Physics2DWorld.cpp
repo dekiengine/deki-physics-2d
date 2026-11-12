@@ -11,9 +11,13 @@ namespace
 // Overlap this small is left alone, so a resting body keeps touching what it
 // rests on instead of jittering between touching and not.
 constexpr float kSlop = 0.005f;
-// The share of the remaining overlap a step removes: all of it at once makes
+// The share of the remaining overlap a pass removes: all of it at once makes
 // stacks bounce.
-constexpr float kCorrection = 0.5f;
+constexpr float kCorrection = 0.8f;
+// How many times a step goes over the contacts removing it.
+constexpr int kCorrectionPasses = 4;
+// Overlap beyond kSlop that a body may go to sleep with.
+constexpr float kOverlapAtRest = 0.0025f;
 // Slower than this does not bounce, or a resting body would never settle.
 constexpr float kBounceThreshold = 0.5f;
 // Two contact points are solved together unless they are so close that the
@@ -1100,6 +1104,10 @@ void World::PrepareContact(Manifold& contact)
     // for their bodies, and take the root for the friction every time.
     contact.bodyA = sa.body;
     contact.bodyB = sb.body;
+    // Where the two are as the overlap is measured, for CorrectPositions.
+    contact.apart = Sub(b.position, a.position);
+    contact.angleA = a.angle;
+    contact.angleB = b.angle;
     contact.friction = std::sqrt(sa.friction * sb.friction);
 
     for (int i = 0; i < contact.pointCount; ++i)
@@ -1297,44 +1305,62 @@ void World::SolvePair(Manifold& contact, Body& a, Body& b)
     p2.normalImpulse = x2;
 }
 
-void World::CorrectPositions(float dt)
+void World::CorrectPositions()
 {
-    for (const Manifold& contact : m_Manifolds)
+    // In a few passes, each from where the last left the bodies and from the
+    // other end of the list: a push between two boxes of a stack moves the
+    // lower one into the box under it, which only a later contact sees, so
+    // an overlap travels one box a pass, up the stack or down it.
+    const size_t count = m_Manifolds.size();
+    for (int pass = 0; pass < kCorrectionPasses; ++pass)
     {
-        if (contact.resting)
+        for (size_t index = 0; index < count; ++index)
         {
-            continue;
-        }
-        Body& a = m_Bodies[contact.bodyA];
-        Body& b = m_Bodies[contact.bodyB];
-        // A point's share of the push: a contact has one point or two, and
-        // halving is what dividing by two gives.
-        const float share = contact.pointCount == 2 ? 0.5f : 1.0f;
-        for (int i = 0; i < contact.pointCount; ++i)
-        {
-            const ContactPoint& point = contact.points[i];
-            // What is left of the overlap once the step has moved the two:
-            // the overlap was measured before they moved, and a pair flying
-            // apart has already taken itself out of some of it. Pushing that
-            // apart as well lifted a bouncing ball a little higher each time.
-            const Vec2 apart = Sub(Add(b.velocity, Perp(b.angularVelocity, point.toB)),
-                                   Add(a.velocity, Perp(a.angularVelocity, point.toA)));
-            const float separated = std::max(Dot(apart, contact.normal), 0.0f) * dt;
-            const float depth = point.penetration - kSlop - separated;
-            if (depth <= 0.0f || point.normalMass <= 0.0f)
+            const Manifold& contact = m_Manifolds[pass % 2 == 1 ? count - 1 - index : index];
+            if (contact.resting)
             {
                 continue;
             }
-            const float move = depth * kCorrection * point.normalMass * share;
-            const Vec2 push = Scale(contact.normal, move);
-            a.position = Sub(a.position, Scale(push, a.invMass));
-            a.angle -= a.invInertia * Cross(point.toA, push);
-            b.position = Add(b.position, Scale(push, b.invMass));
-            b.angle += b.invInertia * Cross(point.toB, push);
+            Body& a = m_Bodies[contact.bodyA];
+            Body& b = m_Bodies[contact.bodyB];
+            // How far the two have moved and turned since the overlap was
+            // measured: by the step, and by the pushes made here so far.
+            const Vec2 moved = Sub(Sub(b.position, a.position), contact.apart);
+            const float turnedA = a.angle - contact.angleA;
+            const float turnedB = b.angle - contact.angleB;
+            // A point's share of the push: a contact has one point or two,
+            // and halving is what dividing by two gives.
+            const float share = contact.pointCount == 2 ? 0.5f : 1.0f;
+            for (int i = 0; i < contact.pointCount; ++i)
+            {
+                const ContactPoint& point = contact.points[i];
+                // What is left of the overlap where the two are now. A pair
+                // flying apart has taken itself out of it, and pushing those
+                // apart as well lifted a bouncing ball higher each bounce; a
+                // pair still closing is deeper than it was measured.
+                const Vec2 here = Add(moved, Sub(Perp(turnedB, point.toB), Perp(turnedA, point.toA)));
+                const float depth = point.penetration - kSlop - Dot(here, contact.normal);
+                if (depth <= 0.0f || point.normalMass <= 0.0f)
+                {
+                    continue;
+                }
+                // Still being pushed apart: not at rest yet, however slowly
+                // it moves. Asleep, it would keep the overlap for good.
+                if (depth > kOverlapAtRest)
+                {
+                    a.sleepTime = 0.0f;
+                    b.sleepTime = 0.0f;
+                }
+                const float move = depth * kCorrection * point.normalMass * share;
+                const Vec2 push = Scale(contact.normal, move);
+                a.position = Sub(a.position, Scale(push, a.invMass));
+                a.angle -= a.invInertia * Cross(point.toA, push);
+                b.position = Add(b.position, Scale(push, b.invMass));
+                b.angle += b.invInertia * Cross(point.toB, push);
+            }
         }
     }
 }
-
 void World::PrepareJoint(Joint& joint, float dt)
 {
     Body& a = m_Bodies[joint.bodyA];
@@ -1934,7 +1960,7 @@ void World::FixedStep()
     }
 
     IntegratePositions(dt);
-    CorrectPositions(dt);
+    CorrectPositions();
 
     for (Body& body : m_Bodies)
     {

@@ -279,6 +279,9 @@ private:
         // shapes' bodies and the friction between them.
         uint32_t bodyA = 0, bodyB = 0;
         float friction = 0.0f;
+        // From A to B, and their angles, as the overlap was measured.
+        Vec2 apart;
+        float angleA = 0.0f, angleB = 0.0f;
         // Its two points solved together (SolvePair): how a push at one
         // moves each, and one over the determinant of that.
         bool paired = false;
@@ -340,7 +343,7 @@ private:
     void WarmStart(Manifold& contact);
     void SolveVelocity(Manifold& contact, bool reverse);
     void SolvePair(Manifold& contact, Body& a, Body& b);
-    void CorrectPositions(float dt);
+    void CorrectPositions();
     void PrepareJoint(Joint& joint, float dt);
     void SolveJoint(Joint& joint);
     bool IsFast(const Body& body, float dt) const;

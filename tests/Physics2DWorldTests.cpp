@@ -1276,7 +1276,10 @@ TEST(Physics2DWorld, ATallStackStands)
         EXPECT_NEAR(world.GetPosition(stack[i]).x, 0.0f, 0.01f) << "box " << i;
         EXPECT_NEAR(world.GetAngle(stack[i]), 0.0f, 0.01f) << "box " << i;
     }
-    // Each rests a little into the one below, no more.
-    EXPECT_NEAR(world.GetPosition(stack.back()).y, 0.5f, 0.5f);
+    // Each rests a little into the one below, no more: under a centimetre a
+    // box, where it used to go to sleep a centimetre and a half in.
+    const float sunk = world.GetPosition(stack.back()).y - 0.5f;
+    EXPECT_GE(sunk, 0.0f);
+    EXPECT_LT(sunk, 0.2f);
     EXPECT_FALSE(world.IsAwake(stack.back()));
 }
