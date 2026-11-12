@@ -16,6 +16,9 @@ constexpr float kSlop = 0.005f;
 constexpr float kCorrection = 0.5f;
 // Slower than this does not bounce, or a resting body would never settle.
 constexpr float kBounceThreshold = 0.5f;
+// Two contact points are solved together unless they are so close that the
+// sums behind it lose their meaning in the rounding.
+constexpr float kMaxPairCondition = 1000.0f;
 // A body this slow for this long, with everything touching it, goes to sleep.
 constexpr float kSleepSpeed = 0.03f;
 constexpr float kSleepSpin = 0.06f;
@@ -1113,10 +1116,37 @@ void World::PrepareContact(Manifold& contact)
         point.normalMass = invN > 0.0f ? 1.0f / invN : 0.0f;
         point.tangentMass = invT > 0.0f ? 1.0f / invT : 0.0f;
 
-        const Vec2 va = Add(a.velocity, Perp(a.angularVelocity, point.toA));
-        const Vec2 vb = Add(b.velocity, Perp(b.angularVelocity, point.toB));
+        // A bounce gives back the speed the two met with: the speed they
+        // arrived at, before this step's gravity and forces were added. With
+        // those in it, every bounce returned a step of gravity more than it
+        // took, and a ball that keeps all its speed rose higher each time.
+        const Vec2 va = Add(a.arriving, Perp(a.arrivingSpin, point.toA));
+        const Vec2 vb = Add(b.arriving, Perp(b.arrivingSpin, point.toB));
         const float along = Dot(Sub(vb, va), contact.normal);
         point.bounce = -along > kBounceThreshold ? -bounciness * along : 0.0f;
+    }
+
+    // Two points are solved together (SolvePair) when they are far enough
+    // apart to tell from one: how each one's push moves the other.
+    contact.paired = false;
+    if (contact.pointCount == 2)
+    {
+        const float rn1A = Cross(contact.points[0].toA, contact.normal);
+        const float rn1B = Cross(contact.points[0].toB, contact.normal);
+        const float rn2A = Cross(contact.points[1].toA, contact.normal);
+        const float rn2B = Cross(contact.points[1].toB, contact.normal);
+        const float k11 = a.invMass + b.invMass + a.invInertia * rn1A * rn1A + b.invInertia * rn1B * rn1B;
+        const float k22 = a.invMass + b.invMass + a.invInertia * rn2A * rn2A + b.invInertia * rn2B * rn2B;
+        const float k12 = a.invMass + b.invMass + a.invInertia * rn1A * rn2A + b.invInertia * rn1B * rn2B;
+        const float det = k11 * k22 - k12 * k12;
+        if (k11 * k11 < kMaxPairCondition * det)
+        {
+            contact.paired = true;
+            contact.k11 = k11;
+            contact.k12 = k12;
+            contact.k22 = k22;
+            contact.invDet = 1.0f / det;
+        }
     }
 }
 
@@ -1172,6 +1202,24 @@ void World::SolveVelocity(Manifold& contact, bool reverse)
                    Add(a.velocity, Perp(a.angularVelocity, point.toA)));
     };
 
+    if (contact.paired)
+    {
+        // Friction at each point for the push it carries, then both pushes at
+        // once.
+        for (int k = 0; k < 2; ++k)
+        {
+            ContactPoint& point = contact.points[reverse ? 1 - k : k];
+            const float slide = Dot(relative(point), tangent);
+            const float limit = mu * point.normalImpulse;
+            const float friction = Clamp(point.tangentImpulse - point.tangentMass * slide, -limit, limit);
+            const float frictionChange = friction - point.tangentImpulse;
+            point.tangentImpulse = friction;
+            apply(point, Scale(tangent, frictionChange));
+        }
+        SolvePair(contact, a, b);
+        return;
+    }
+
     // Solved in turns from either end: always starting at the same corner
     // leaves a little spin behind each step, and a stack walks off sideways.
     for (int k = 0; k < contact.pointCount; ++k)
@@ -1195,7 +1243,61 @@ void World::SolveVelocity(Manifold& contact, bool reverse)
     }
 }
 
-void World::CorrectPositions()
+// The pushes of a contact's two points, found together. Each push must be
+// zero or more and leave its point not closing; solved one after the other,
+// each undoes part of what the other did, and a box set down flat rocks from
+// corner to corner: a tall stack then leans and falls. Together there are
+// four cases (both push, either alone, neither), tried in that order; the
+// first that fits is the answer.
+void World::SolvePair(Manifold& contact, Body& a, Body& b)
+{
+    ContactPoint& p1 = contact.points[0];
+    ContactPoint& p2 = contact.points[1];
+    const Vec2 normal = contact.normal;
+    auto closing = [&](const ContactPoint& point)
+    {
+        const Vec2 v = Sub(Add(b.velocity, Perp(b.angularVelocity, point.toB)),
+                           Add(a.velocity, Perp(a.angularVelocity, point.toA)));
+        return Dot(v, normal) - point.bounce;
+    };
+    // What the two would close at with no push at all.
+    const float had1 = p1.normalImpulse, had2 = p2.normalImpulse;
+    const float b1 = closing(p1) - (contact.k11 * had1 + contact.k12 * had2);
+    const float b2 = closing(p2) - (contact.k12 * had1 + contact.k22 * had2);
+
+    float x1 = 0.0f, x2 = 0.0f;
+    // Both push.
+    const float both1 = -(contact.k22 * b1 - contact.k12 * b2) * contact.invDet;
+    const float both2 = -(contact.k11 * b2 - contact.k12 * b1) * contact.invDet;
+    if (both1 >= 0.0f && both2 >= 0.0f)
+    {
+        x1 = both1;
+        x2 = both2;
+    }
+    // Only the first pushes, and the second is not closing.
+    else if (-b1 * p1.normalMass >= 0.0f && contact.k12 * (-b1 * p1.normalMass) + b2 >= 0.0f)
+    {
+        x1 = -b1 * p1.normalMass;
+    }
+    // Only the second.
+    else if (-b2 * p2.normalMass >= 0.0f && contact.k12 * (-b2 * p2.normalMass) + b1 >= 0.0f)
+    {
+        x2 = -b2 * p2.normalMass;
+    }
+    // Neither, when both are parting by themselves. (When no case fits, which
+    // rounding allows, neither pushes this pass either.)
+
+    const Vec2 push1 = Scale(normal, x1 - had1);
+    const Vec2 push2 = Scale(normal, x2 - had2);
+    a.velocity = Sub(a.velocity, Scale(Add(push1, push2), a.invMass));
+    a.angularVelocity -= a.invInertia * (Cross(p1.toA, push1) + Cross(p2.toA, push2));
+    b.velocity = Add(b.velocity, Scale(Add(push1, push2), b.invMass));
+    b.angularVelocity += b.invInertia * (Cross(p1.toB, push1) + Cross(p2.toB, push2));
+    p1.normalImpulse = x1;
+    p2.normalImpulse = x2;
+}
+
+void World::CorrectPositions(float dt)
 {
     for (const Manifold& contact : m_Manifolds)
     {
@@ -1211,7 +1313,14 @@ void World::CorrectPositions()
         for (int i = 0; i < contact.pointCount; ++i)
         {
             const ContactPoint& point = contact.points[i];
-            const float depth = point.penetration - kSlop;
+            // What is left of the overlap once the step has moved the two:
+            // the overlap was measured before they moved, and a pair flying
+            // apart has already taken itself out of some of it. Pushing that
+            // apart as well lifted a bouncing ball a little higher each time.
+            const Vec2 apart = Sub(Add(b.velocity, Perp(b.angularVelocity, point.toB)),
+                                   Add(a.velocity, Perp(a.angularVelocity, point.toA)));
+            const float separated = std::max(Dot(apart, contact.normal), 0.0f) * dt;
+            const float depth = point.penetration - kSlop - separated;
             if (depth <= 0.0f || point.normalMass <= 0.0f)
             {
                 continue;
@@ -1760,6 +1869,8 @@ void World::FixedStep()
 
     for (Body& body : m_Bodies)
     {
+        body.arriving = body.velocity;
+        body.arrivingSpin = body.angularVelocity;
         if (!body.alive || body.type != BodyType::Dynamic || !body.awake)
         {
             continue;
@@ -1823,7 +1934,7 @@ void World::FixedStep()
     }
 
     IntegratePositions(dt);
-    CorrectPositions();
+    CorrectPositions(dt);
 
     for (Body& body : m_Bodies)
     {

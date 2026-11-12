@@ -208,6 +208,10 @@ private:
         float sinAngle = 0.0f;
         Vec2 velocity;
         float angularVelocity = 0.0f;
+        // What it had as the step began, before gravity and forces: the speed a
+        // contact bounces from.
+        Vec2 arriving;
+        float arrivingSpin = 0.0f;
         Vec2 force;
         float torque = 0.0f;
         float mass = 0.0f;  // as asked for; invMass is 0 unless dynamic
@@ -275,6 +279,10 @@ private:
         // shapes' bodies and the friction between them.
         uint32_t bodyA = 0, bodyB = 0;
         float friction = 0.0f;
+        // Its two points solved together (SolvePair): how a push at one
+        // moves each, and one over the determinant of that.
+        bool paired = false;
+        float k11 = 0.0f, k12 = 0.0f, k22 = 0.0f, invDet = 0.0f;
         ContactPoint points[2];
     };
     struct Joint
@@ -331,7 +339,8 @@ private:
     void PrepareContact(Manifold& contact);
     void WarmStart(Manifold& contact);
     void SolveVelocity(Manifold& contact, bool reverse);
-    void CorrectPositions();
+    void SolvePair(Manifold& contact, Body& a, Body& b);
+    void CorrectPositions(float dt);
     void PrepareJoint(Joint& joint, float dt);
     void SolveJoint(Joint& joint);
     bool IsFast(const Body& body, float dt) const;

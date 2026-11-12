@@ -36,3 +36,9 @@ alongside one that has them.
   each solver pass looked the shapes up again and took a square root.
 - A body asleep, or moved by code and not spinning, is not given its sine
   and cosine again every step.
+- A contact's two points are solved together. Solved one after the other, a
+  box set down flat rocked from corner to corner, and a stack of 15 leant and
+  fell; a stack of 20 now stands without moving sideways.
+- A bounce gives back the speed the two arrived with, before the step's
+  gravity. A ball that keeps all its speed rose 4% higher with every bounce;
+  it now comes back to where it fell from.

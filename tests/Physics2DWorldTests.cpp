@@ -1214,3 +1214,69 @@ TEST(Physics2DWorld, AFrameFarBehindDropsWhatItCannotRun)
     EXPECT_EQ(world.Step(1.0f), 4);          // sixty steps asked for
     EXPECT_EQ(world.Step(1.0f / 60.0f), 1);  // none of the rest comes back
 }
+
+TEST(Physics2DWorld, ABallThatKeepsAllItsSpeedComesBackToWhereItFellFrom)
+{
+    // No higher, bounce after bounce: a bounce gives back the speed the ball
+    // arrived with, not that and the step's gravity.
+    TestWorld world;
+    BodyDef groundBody;
+    groundBody.type = BodyType::Static;
+    groundBody.position = { 0.0f, 10.5f };
+    BodyHandle ground = world.CreateBody(groundBody);
+    ShapeDef groundShape;
+    groundShape.halfWidth = 10.0f;
+    groundShape.halfHeight = 0.5f;
+    groundShape.bounciness = 1.0f;
+    world.AddShape(ground, groundShape);
+    BodyDef ballBody;
+    ballBody.position = { 0.0f, 4.5f };  // 5 m above where it rests
+    BodyHandle ball = world.CreateBody(ballBody);
+    ShapeDef ballShape;
+    ballShape.type = ShapeType::Circle;
+    ballShape.radius = 0.5f;
+    ballShape.bounciness = 1.0f;
+    world.AddShape(ball, ballShape);
+
+    int bounces = 0;
+    float top = 100.0f, lastSpeed = 0.0f;
+    for (int i = 0; i < 60 * 40 && bounces < 9; ++i)
+    {
+        world.Step(1.0f / 60.0f);
+        const float speed = world.GetVelocity(ball).y;  // +Y is down
+        if (lastSpeed > 0.0f && speed <= 0.0f)
+        {
+            if (bounces > 0)
+            {
+                EXPECT_NEAR(9.5f - top, 5.0f, 0.05f) << "after bounce " << bounces;
+            }
+            ++bounces;
+            top = 100.0f;
+        }
+        lastSpeed = speed;
+        top = std::min(top, world.GetPosition(ball).y);
+    }
+    EXPECT_EQ(bounces, 9);
+}
+
+TEST(Physics2DWorld, ATallStackStands)
+{
+    // Twenty boxes, each on the one below: a contact's two points are solved
+    // together, so none rocks on its corners and the stack does not lean.
+    TestWorld world;
+    AddBox(world, BodyType::Static, { 0.0f, 20.5f }, 20.0f, 0.5f);
+    std::vector<BodyHandle> stack;
+    for (int i = 0; i < 20; ++i)
+    {
+        stack.push_back(AddBox(world, BodyType::Dynamic, { 0.0f, 19.5f - static_cast<float>(i) }));
+    }
+    Simulate(world, 10.0f);
+    for (size_t i = 0; i < stack.size(); ++i)
+    {
+        EXPECT_NEAR(world.GetPosition(stack[i]).x, 0.0f, 0.01f) << "box " << i;
+        EXPECT_NEAR(world.GetAngle(stack[i]), 0.0f, 0.01f) << "box " << i;
+    }
+    // Each rests a little into the one below, no more.
+    EXPECT_NEAR(world.GetPosition(stack.back()).y, 0.5f, 0.5f);
+    EXPECT_FALSE(world.IsAwake(stack.back()));
+}
