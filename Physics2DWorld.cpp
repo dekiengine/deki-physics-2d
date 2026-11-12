@@ -406,6 +406,11 @@ void World::RemoveShape(ShapeHandle handle)
     }
     m_Touching.erase(std::remove_if(m_Touching.begin(), m_Touching.end(), involves), m_Touching.end());
     m_WasTouching.erase(std::remove_if(m_WasTouching.begin(), m_WasTouching.end(), involves), m_WasTouching.end());
+    // And its contacts go with it: a shape made later takes its place in the
+    // list, and would start from the pushes this one was held with.
+    m_Manifolds.erase(std::remove_if(m_Manifolds.begin(), m_Manifolds.end(), [&](const Manifold& contact)
+                                     { return contact.shapeA == handle.index || contact.shapeB == handle.index; }),
+                      m_Manifolds.end());
 
     const uint32_t bodyIndex = shape.body;
     shape.alive = false;
@@ -1383,7 +1388,7 @@ bool World::DoNotCollide(const Shape& a, const Shape& b) const
     return false;
 }
 
-void World::FindContacts()
+void World::RefreshSweep()
 {
     for (uint32_t index : m_Sweep)
     {
@@ -1396,7 +1401,7 @@ void World::FindContacts()
         }
     }
 
-    // Sort and sweep along X. Insertion sort, because the order barely changes
+    // Sorted along X. Insertion sort, because the order barely changes
     // between steps and it is then close to linear.
     for (size_t i = 1; i < m_Sweep.size(); ++i)
     {
@@ -1410,6 +1415,11 @@ void World::FindContacts()
         }
         m_Sweep[j] = value;
     }
+}
+
+void World::FindContacts()
+{
+    RefreshSweep();
 
     // Kept, sorted by pair, so this step's contacts can start from last step's
     // pushes: a stack is then already held up before the solver begins.
@@ -1601,11 +1611,20 @@ void World::IntegratePositions(float dt)
             body.angle += body.angularVelocity * dt;
         }
     }
-    // After the rest, so each fast body meets everything where it ended up.
+    // After the rest, so each fast body meets everything where it ended up:
+    // the boxes it is tested against are brought to where the others are
+    // now, once, before the first of them. (One fast body is still tested
+    // against where another began the step.)
+    bool refreshed = false;
     for (uint32_t i = 0; i < m_Bodies.size(); ++i)
     {
         if (m_Bodies[i].alive && IsFast(m_Bodies[i], dt))
         {
+            if (!refreshed)
+            {
+                RefreshSweep();
+                refreshed = true;
+            }
             SweepBody(i, dt);
         }
     }
@@ -1884,9 +1903,12 @@ int World::Step(float deltaSeconds)
         m_Banked -= fixedStep;
         ++steps;
     }
-    if (steps == maxStepsPerFrame)
+    if (m_Banked >= fixedStep - 1e-5f)
     {
-        m_Banked = 0.0f;  // behind: the game slows down rather than spiralling
+        // Still a whole step behind after the most it may run: the game slows
+        // down rather than spiralling. Less than a step is kept for the next
+        // frame, as on any other.
+        m_Banked = 0.0f;
     }
     return steps;
 }

@@ -927,7 +927,8 @@ TEST(Physics2DWorld, AStandingCapsuleTipsOver)
 {
     TestWorld world;
     AddBox(world, BodyType::Static, { 0.0f, 5.0f }, 20.0f, 0.5f);
-    const BodyHandle capsule = AddBody(world, BodyType::Dynamic, { 0.05f, 3.5f }, CapsuleShape(0.25f, 0.8f, 1.5707963f));
+    const BodyHandle capsule =
+        AddBody(world, BodyType::Dynamic, { 0.05f, 3.5f }, CapsuleShape(0.25f, 0.8f, 1.5707963f));
     world.SetAngularVelocity(capsule, 0.2f);
     Simulate(world, 4.0f);
     EXPECT_NEAR(world.GetPosition(capsule).y, 4.25f, 0.05f) << "ends up on its side";
@@ -1159,4 +1160,57 @@ TEST(Physics2DWorld, JoinedBodiesSleepTogether)
     ASSERT_FALSE(world.IsAwake(b));
     world.WakeUp(a);
     EXPECT_TRUE(world.IsAwake(b));
+}
+
+TEST(Physics2DWorld, AFastBodyStopsAtAWallThatMoves)
+{
+    // The wall is where it has moved to this step, not where the step began.
+    World world;
+    world.gravity = { 0.0f, 0.0f };
+    BodyDef wallBody;
+    wallBody.type = BodyType::Kinematic;
+    wallBody.position = { 10.0f, 0.0f };
+    wallBody.velocity = { 60.0f, 0.0f };  // a metre a step
+    BodyHandle wall = world.CreateBody(wallBody);
+    ShapeDef wallShape;
+    wallShape.halfWidth = 0.05f;
+    wallShape.halfHeight = 2.0f;
+    world.AddShape(wall, wallShape);
+
+    BodyDef bulletBody;
+    bulletBody.position = { 0.0f, 0.0f };
+    bulletBody.velocity = { 600.0f, 0.0f };  // ten metres a step
+    BodyHandle bullet = world.CreateBody(bulletBody);
+    ShapeDef bulletShape;
+    bulletShape.type = ShapeType::Circle;
+    bulletShape.radius = 0.1f;
+    world.AddShape(bullet, bulletShape);
+
+    for (int i = 0; i < 4; ++i)
+    {
+        world.Step(1.0f / 60.0f);
+        EXPECT_LT(world.GetPosition(bullet).x, world.GetPosition(wall).x + 0.2f) << "step " << i;
+    }
+}
+
+TEST(Physics2DWorld, TimeUnderAStepIsKeptWhenAFrameRunsTheMostSteps)
+{
+    // Frames of four and a half steps and three and a half: eight steps a
+    // pair, the first of each keeping its half for the second.
+    World world;
+    world.maxStepsPerFrame = 4;
+    int steps = 0;
+    for (int frame = 0; frame < 20; ++frame)
+    {
+        steps += world.Step((frame % 2 == 0 ? 4.5f : 3.5f) / 60.0f);
+    }
+    EXPECT_EQ(steps, 80);
+}
+
+TEST(Physics2DWorld, AFrameFarBehindDropsWhatItCannotRun)
+{
+    World world;
+    world.maxStepsPerFrame = 4;
+    EXPECT_EQ(world.Step(1.0f), 4);          // sixty steps asked for
+    EXPECT_EQ(world.Step(1.0f / 60.0f), 1);  // none of the rest comes back
 }

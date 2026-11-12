@@ -325,6 +325,8 @@ private:
     static bool ClipFace(const Hull& reference, const Hull& incident, int face, bool referenceIsA, Manifold& out);
     bool DoNotCollide(const Shape& a, const Shape& b) const;
     const Manifold* FindLastManifold(uint64_t key) const;
+    // Every shape's box where its body is now, and the shapes in order along X.
+    void RefreshSweep();
     void FindContacts();
     void PrepareContact(Manifold& contact);
     void WarmStart(Manifold& contact);
