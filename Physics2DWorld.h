@@ -48,9 +48,9 @@ constexpr int kMaxPolygonPoints = 8;
 struct BodyDef
 {
     BodyType type = BodyType::Dynamic;
-    Vec2 position;       // of the object's origin; a dynamic body turns about the centre of its shapes
-    float angle = 0.0f;  // radians, counter-clockwise, as the engine's rotation
-    Vec2 velocity;       // of the centre of its shapes
+    Vec2 position;                 // of the object's origin; a dynamic body turns about the centre of its shapes
+    float angle = 0.0f;            // radians, counter-clockwise, as the engine's rotation
+    Vec2 velocity;                 // of the centre of its shapes
     float angularVelocity = 0.0f;  // radians per second
     float mass = 1.0f;
     float gravityScale = 1.0f;
@@ -65,19 +65,19 @@ struct BodyDef
 struct ShapeDef
 {
     ShapeType type = ShapeType::Box;
-    Vec2 offset;               // from the body's position, turning with it
-    float halfWidth = 0.5f;    // a box
-    float halfHeight = 0.5f;   // a box
-    float radius = 0.5f;       // a circle or a capsule
-    float halfLength = 0.5f;   // a capsule: from its middle to the centre of either end
-    float angle = 0.0f;        // a capsule: the way it points; 0 lies along X
+    Vec2 offset;                     // from the body's position, turning with it
+    float halfWidth = 0.5f;          // a box
+    float halfHeight = 0.5f;         // a box
+    float radius = 0.5f;             // a circle or a capsule
+    float halfLength = 0.5f;         // a capsule: from its middle to the centre of either end
+    float angle = 0.0f;              // a capsule: the way it points; 0 lies along X
     Vec2 points[kMaxPolygonPoints];  // a polygon, any order; the convex outline of them is used
     int pointCount = 0;
-    float friction = 0.3f;     // 0: ice, 1: rubber
-    float bounciness = 0.0f;   // 0: no bounce, 1: keeps all its speed
-    bool trigger = false;      // reports contacts, pushes nothing
-    uint16_t layer = 1;        // the layer bit this shape is on
-    uint16_t mask = 0xFFFF;    // the layers it collides with; both sides must agree
+    float friction = 0.3f;    // 0: ice, 1: rubber
+    float bounciness = 0.0f;  // 0: no bounce, 1: keeps all its speed
+    bool trigger = false;     // reports contacts, pushes nothing
+    uint16_t layer = 1;       // the layer bit this shape is on
+    uint16_t mask = 0xFFFF;   // the layers it collides with; both sides must agree
     void* user = nullptr;
 };
 
@@ -93,7 +93,7 @@ struct HingeDef
     float lowerAngle = 0.0f;  // radians B may turn from where it started, relative to A
     float upperAngle = 0.0f;
     bool motor = false;
-    float motorSpeed = 0.0f;      // radians per second of B relative to A
+    float motorSpeed = 0.0f;  // radians per second of B relative to A
     float maxMotorTorque = 0.0f;
 };
 
@@ -166,14 +166,14 @@ public:
     Vec2 GetPosition(BodyHandle body) const;           // of the object's origin
     void SetPosition(BodyHandle body, Vec2 position);  // of the object's origin
     float GetAngle(BodyHandle body) const;
-    void SetAngle(BodyHandle body, float radians);     // about the object's origin
-    Vec2 GetVelocity(BodyHandle body) const;           // of the centre of its shapes
+    void SetAngle(BodyHandle body, float radians);  // about the object's origin
+    Vec2 GetVelocity(BodyHandle body) const;        // of the centre of its shapes
     void SetVelocity(BodyHandle body, Vec2 velocity);
     float GetAngularVelocity(BodyHandle body) const;
     void SetAngularVelocity(BodyHandle body, float radiansPerSecond);
-    void AddForce(BodyHandle body, Vec2 force);      // until the next step
-    void AddTorque(BodyHandle body, float torque);   // until the next step
-    void AddImpulse(BodyHandle body, Vec2 impulse);  // now, through the centre
+    void AddForce(BodyHandle body, Vec2 force);                         // until the next step
+    void AddTorque(BodyHandle body, float torque);                      // until the next step
+    void AddImpulse(BodyHandle body, Vec2 impulse);                     // now, through the centre
     void AddImpulseAt(BodyHandle body, Vec2 impulse, Vec2 worldPoint);  // now; turns it unless at the centre
     void* GetBodyUser(BodyHandle body) const;
     void* GetShapeUser(ShapeHandle shape) const;
@@ -219,7 +219,7 @@ private:
         float thinnest = 0.0f;   // of its solid shapes, from the middle to the nearest side
         float sleepTime = 0.0f;  // how long it has been nearly still
         float islandTime = 0.0f;
-        uint32_t island = 0;     // who it sleeps with
+        uint32_t island = 0;  // who it sleeps with
         uint32_t jointCount = 0;
         BodyType type = BodyType::Dynamic;
         bool freezeRotation = false;
@@ -271,6 +271,10 @@ private:
         Vec2 normal;  // from A to B
         int pointCount = 0;
         bool resting = false;  // both sides at rest: kept for when they wake
+        // Prepared once per step, for a contact that is not resting: the
+        // shapes' bodies and the friction between them.
+        uint32_t bodyA = 0, bodyB = 0;
+        float friction = 0.0f;
         ContactPoint points[2];
     };
     struct Joint
@@ -340,6 +344,12 @@ private:
     void FixedStep();
     void ReportContacts();
     Contact MakeContact(uint32_t shapeA, uint32_t shapeB) const;
+    // No body is awake, moving or was moved: a step would change nothing.
+    bool AtRest() const;
+    // Something was changed from outside since the last step (a body made,
+    // moved, pushed or destroyed, a shape or a joint added or removed), so
+    // the next step runs even with everything at rest.
+    bool m_Changed = true;
     JointHandle AddJoint(const Joint& joint);
 
     std::vector<Body> m_Bodies;

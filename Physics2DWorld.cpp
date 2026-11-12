@@ -88,7 +88,8 @@ Vec2 NearestOnSegment(Vec2 p, Vec2 a, Vec2 b)
 bool LinesCross(const Vec2* a, const Vec2* b)
 {
     auto side = [](Vec2 from, Vec2 to, Vec2 p) { return Cross(Sub(to, from), Sub(p, from)); };
-    return side(a[0], a[1], b[0]) * side(a[0], a[1], b[1]) < 0.0f && side(b[0], b[1], a[0]) * side(b[0], b[1], a[1]) < 0.0f;
+    return side(a[0], a[1], b[0]) * side(a[0], a[1], b[1]) < 0.0f &&
+           side(b[0], b[1], a[0]) * side(b[0], b[1], a[1]) < 0.0f;
 }
 
 }  // namespace
@@ -145,6 +146,7 @@ struct World::Hull
 
 BodyHandle World::CreateBody(const BodyDef& def)
 {
+    m_Changed = true;
     uint32_t index;
     if (!m_FreeBodies.empty())
     {
@@ -191,6 +193,7 @@ BodyHandle World::CreateBody(const BodyDef& def)
 
 void World::DestroyBody(BodyHandle handle)
 {
+    m_Changed = true;
     Body* body = Find(handle);
     if (!body)
     {
@@ -258,6 +261,7 @@ Vec2 World::OriginOf(const Body& body)
 
 ShapeHandle World::AddShape(BodyHandle body, const ShapeDef& def)
 {
+    m_Changed = true;
     if (!Find(body))
     {
         return {};
@@ -365,6 +369,7 @@ ShapeHandle World::AddShape(BodyHandle body, const ShapeDef& def)
 
 void World::RemoveShape(ShapeHandle handle)
 {
+    m_Changed = true;
     if (handle.index >= m_Shapes.size())
     {
         return;
@@ -504,6 +509,7 @@ void World::RefreshMassData(uint32_t bodyIndex)
 
 JointHandle World::AddJoint(const Joint& joint)
 {
+    m_Changed = true;
     uint32_t index;
     if (!m_FreeJoints.empty())
     {
@@ -588,6 +594,7 @@ JointHandle World::CreateDistance(const DistanceDef& def)
 
 void World::DestroyJoint(JointHandle handle)
 {
+    m_Changed = true;
     if (!IsValidJoint(handle))
     {
         return;
@@ -628,6 +635,7 @@ Vec2 World::GetPosition(BodyHandle handle) const
 
 void World::SetPosition(BodyHandle handle, Vec2 position)
 {
+    m_Changed = true;
     if (Body* body = Find(handle))
     {
         body->position = Add(position, Turned(*body, body->centre));
@@ -645,6 +653,7 @@ float World::GetAngle(BodyHandle handle) const
 
 void World::SetAngle(BodyHandle handle, float radians)
 {
+    m_Changed = true;
     if (Body* body = Find(handle))
     {
         const Vec2 origin = OriginOf(*body);
@@ -664,6 +673,7 @@ float World::GetAngularVelocity(BodyHandle handle) const
 
 void World::SetAngularVelocity(BodyHandle handle, float radiansPerSecond)
 {
+    m_Changed = true;
     Body* body = Find(handle);
     if (body && body->type != BodyType::Static && !body->freezeRotation)
     {
@@ -681,6 +691,7 @@ void World::SetAngularVelocity(BodyHandle handle, float radiansPerSecond)
 
 void World::AddTorque(BodyHandle handle, float torque)
 {
+    m_Changed = true;
     if (Body* body = Find(handle))
     {
         body->torque += torque;
@@ -690,6 +701,7 @@ void World::AddTorque(BodyHandle handle, float torque)
 
 void World::AddImpulseAt(BodyHandle handle, Vec2 impulse, Vec2 worldPoint)
 {
+    m_Changed = true;
     if (Body* body = Find(handle))
     {
         Wake(handle.index);
@@ -706,6 +718,7 @@ Vec2 World::GetVelocity(BodyHandle handle) const
 
 void World::SetVelocity(BodyHandle handle, Vec2 velocity)
 {
+    m_Changed = true;
     Body* body = Find(handle);
     if (body && body->type != BodyType::Static)
     {
@@ -723,6 +736,7 @@ void World::SetVelocity(BodyHandle handle, Vec2 velocity)
 
 void World::AddForce(BodyHandle handle, Vec2 force)
 {
+    m_Changed = true;
     if (Body* body = Find(handle))
     {
         body->force.x += force.x;
@@ -733,6 +747,7 @@ void World::AddForce(BodyHandle handle, Vec2 force)
 
 void World::AddImpulse(BodyHandle handle, Vec2 impulse)
 {
+    m_Changed = true;
     if (Body* body = Find(handle))
     {
         Wake(handle.index);
@@ -765,6 +780,7 @@ bool World::IsAwake(BodyHandle handle) const
 
 void World::WakeUp(BodyHandle handle)
 {
+    m_Changed = true;
     if (Find(handle))
     {
         Wake(handle.index);
@@ -957,7 +973,8 @@ bool World::CollideHulls(const Hull& a, const Hull& b, Manifold& out)
             float separation = kInfinity;
             for (int i = 0; i < other.count; ++i)
             {
-                separation = std::min(separation, Dot(reference.normals[face], Sub(other.points[i], reference.points[face])));
+                separation =
+                    std::min(separation, Dot(reference.normals[face], Sub(other.points[i], reference.points[face])));
             }
             if (separation > totalRadius)
             {
@@ -1071,6 +1088,11 @@ void World::PrepareContact(Manifold& contact)
     const Body& b = m_Bodies[sb.body];
     const Vec2 tangent = { -contact.normal.y, contact.normal.x };
     const float bounciness = std::max(sa.bounciness, sb.bounciness);
+    // Kept for the passes that follow: each would find the two shapes again
+    // for their bodies, and take the root for the friction every time.
+    contact.bodyA = sa.body;
+    contact.bodyB = sb.body;
+    contact.friction = std::sqrt(sa.friction * sb.friction);
 
     for (int i = 0; i < contact.pointCount; ++i)
     {
@@ -1108,8 +1130,8 @@ void World::WarmStart(Manifold& contact)
         return;
     }
 
-    Body& a = m_Bodies[m_Shapes[contact.shapeA].body];
-    Body& b = m_Bodies[m_Shapes[contact.shapeB].body];
+    Body& a = m_Bodies[contact.bodyA];
+    Body& b = m_Bodies[contact.bodyB];
     const Vec2 tangent = { -contact.normal.y, contact.normal.x };
     for (int i = 0; i < contact.pointCount; ++i)
     {
@@ -1126,13 +1148,11 @@ void World::WarmStart(Manifold& contact)
 
 void World::SolveVelocity(Manifold& contact, bool reverse)
 {
-    const Shape& sa = m_Shapes[contact.shapeA];
-    const Shape& sb = m_Shapes[contact.shapeB];
-    Body& a = m_Bodies[sa.body];
-    Body& b = m_Bodies[sb.body];
+    Body& a = m_Bodies[contact.bodyA];
+    Body& b = m_Bodies[contact.bodyB];
     const Vec2 normal = contact.normal;
     const Vec2 tangent = { -normal.y, normal.x };
-    const float mu = std::sqrt(sa.friction * sb.friction);
+    const float mu = contact.friction;
 
     auto apply = [&](const ContactPoint& point, Vec2 impulse)
     {
@@ -1178,8 +1198,11 @@ void World::CorrectPositions()
         {
             continue;
         }
-        Body& a = m_Bodies[m_Shapes[contact.shapeA].body];
-        Body& b = m_Bodies[m_Shapes[contact.shapeB].body];
+        Body& a = m_Bodies[contact.bodyA];
+        Body& b = m_Bodies[contact.bodyB];
+        // A point's share of the push: a contact has one point or two, and
+        // halving is what dividing by two gives.
+        const float share = contact.pointCount == 2 ? 0.5f : 1.0f;
         for (int i = 0; i < contact.pointCount; ++i)
         {
             const ContactPoint& point = contact.points[i];
@@ -1188,7 +1211,7 @@ void World::CorrectPositions()
             {
                 continue;
             }
-            const float move = depth * kCorrection * point.normalMass / static_cast<float>(contact.pointCount);
+            const float move = depth * kCorrection * point.normalMass * share;
             const Vec2 push = Scale(contact.normal, move);
             a.position = Sub(a.position, Scale(push, a.invMass));
             a.angle -= a.invInertia * Cross(point.toA, push);
@@ -1289,7 +1312,8 @@ void World::SolveJoint(Joint& joint)
     };
     auto pointSpeed = [&]()
     {
-        return Sub(Add(b.velocity, Perp(b.angularVelocity, joint.toB)), Add(a.velocity, Perp(a.angularVelocity, joint.toA)));
+        return Sub(Add(b.velocity, Perp(b.angularVelocity, joint.toB)),
+                   Add(a.velocity, Perp(a.angularVelocity, joint.toA)));
     };
 
     if (!joint.hinge)
@@ -1643,7 +1667,7 @@ void World::UpdateSleep(float dt)
     {
         if (!contact.resting)
         {
-            JoinIslands(m_Shapes[contact.shapeA].body, m_Shapes[contact.shapeB].body);
+            JoinIslands(contact.bodyA, contact.bodyB);
         }
     }
     for (const Joint& joint : m_Joints)
@@ -1679,6 +1703,24 @@ void World::UpdateSleep(float dt)
     }
 }
 
+bool World::AtRest() const
+{
+    for (const Body& body : m_Bodies)
+    {
+        if (!body.alive)
+        {
+            continue;
+        }
+        const bool moving = body.velocity.x != 0.0f || body.velocity.y != 0.0f || body.angularVelocity != 0.0f;
+        if (body.moved || (body.type == BodyType::Dynamic && body.awake) ||
+            (body.type == BodyType::Kinematic && moving))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 void World::FixedStep()
 {
     const float dt = fixedStep;
@@ -1688,6 +1730,14 @@ void World::FixedStep()
         m_LastGravity = gravity;
         WakeAll();
     }
+
+    // Nothing awake, nothing moving and nothing changed since the last step:
+    // this one would find the same contacts and leave everything where it is.
+    if (!m_Changed && AtRest())
+    {
+        return;
+    }
+    m_Changed = false;
 
     for (Body& body : m_Bodies)
     {
@@ -1758,7 +1808,10 @@ void World::FixedStep()
 
     for (Body& body : m_Bodies)
     {
-        if (body.alive && body.type != BodyType::Static)
+        // Only a body the step could have turned: one asleep, or moved by
+        // code and not spinning, has the angle it was last given (SetPose).
+        const bool turned = body.type == BodyType::Dynamic ? body.awake : body.angularVelocity != 0.0f;
+        if (body.alive && body.type != BodyType::Static && turned)
         {
             body.cosAngle = std::cos(body.angle);
             body.sinAngle = std::sin(body.angle);
@@ -1933,7 +1986,8 @@ bool World::Raycast(Vec2 from, Vec2 to, RayHit& hit, uint16_t mask) const
             const Vec2 reach = Scale(hull.normals[0], hull.radius);
             const Vec2 edge = Sub(hull.points[1], hull.points[0]);
             const Vec2 along = Scale(edge, 1.0f / std::sqrt(Dot(edge, edge)));
-            const Vec2 onFace[4] = { Add(hull.points[0], reach), Sub(hull.points[0], reach), hull.points[1], hull.points[0] };
+            const Vec2 onFace[4] = { Add(hull.points[0], reach), Sub(hull.points[0], reach), hull.points[1],
+                                     hull.points[0] };
             const Vec2 normals[4] = { hull.normals[0], hull.normals[1], along, Scale(along, -1.0f) };
             float side = -1.0f;
             Vec2 sideNormal;

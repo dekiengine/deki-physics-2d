@@ -26,3 +26,13 @@ alongside one that has them.
   size.
 - Colliders and joints are drawn in the Scene View, with handles to drag a
   selected collider's size and corners.
+- A world at rest is not stepped. With no body awake or moving and nothing
+  changed from outside since the last step, a step returns at once; it used
+  to find every contact again and copy what it kept of each. A settled pile
+  of 100 boxes went from 22.7 to 0.2 microseconds a step on a desktop, and
+  ends where it did before, bit for bit. Whatever code changes while the
+  world rests (a push, a body or a trigger removed) is still stepped.
+- A contact keeps its two bodies and the friction between them for the step:
+  each solver pass looked the shapes up again and took a square root.
+- A body asleep, or moved by code and not spinning, is not given its sine
+  and cosine again every step.
