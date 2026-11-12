@@ -38,7 +38,9 @@ alongside one that has them.
   and cosine again every step.
 - A contact's two points are solved together. Solved one after the other, a
   box set down flat rocked from corner to corner, and a stack of 15 leant and
-  fell; a stack of 20 now stands without moving sideways.
+  fell; a stack of 10 now stands, set down exactly or a little to one side.
+  A taller one stands or falls by the rounding of a sum: twenty boxes stand
+  on a desktop and fall on an ESP32-S3.
 - A bounce gives back the speed the two arrived with, before the step's
   gravity. A ball that keeps all its speed rose 4% higher with every bounce;
   it now comes back to where it fell from.

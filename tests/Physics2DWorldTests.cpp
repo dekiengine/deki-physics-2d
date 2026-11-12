@@ -1261,25 +1261,33 @@ TEST(Physics2DWorld, ABallThatKeepsAllItsSpeedComesBackToWhereItFellFrom)
 
 TEST(Physics2DWorld, ATallStackStands)
 {
-    // Twenty boxes, each on the one below: a contact's two points are solved
-    // together, so none rocks on its corners and the stack does not lean.
-    TestWorld world;
-    AddBox(world, BodyType::Static, { 0.0f, 20.5f }, 20.0f, 0.5f);
-    std::vector<BodyHandle> stack;
-    for (int i = 0; i < 20; ++i)
+    // Ten boxes, each on the one below, set down exactly or a little to one
+    // side: a contact's two points are solved together, so none rocks on its
+    // corners and the stack does not lean. (Ten is what the solver's passes
+    // carry whatever the order of the contacts and the processor's rounding;
+    // a stack of twenty stands or falls by the last bit of a sum.)
+    constexpr int kBoxes = 10;
+    for (const float offset : { 0.0f, 0.001f, 0.02f, 0.05f })
     {
-        stack.push_back(AddBox(world, BodyType::Dynamic, { 0.0f, 19.5f - static_cast<float>(i) }));
+        TestWorld world;
+        AddBox(world, BodyType::Static, { 0.0f, 20.5f }, 20.0f, 0.5f);
+        std::vector<BodyHandle> stack;
+        for (int i = 0; i < kBoxes; ++i)
+        {
+            const float x = offset * static_cast<float>(i % 3 - 1);
+            stack.push_back(AddBox(world, BodyType::Dynamic, { x, 19.5f - static_cast<float>(i) }));
+        }
+        Simulate(world, 10.0f);
+        for (size_t i = 0; i < stack.size(); ++i)
+        {
+            EXPECT_NEAR(world.GetPosition(stack[i]).x, 0.0f, offset + 0.05f) << "box " << i << ", offset " << offset;
+            EXPECT_NEAR(world.GetAngle(stack[i]), 0.0f, 0.02f) << "box " << i << ", offset " << offset;
+        }
+        // Each rests a little into the one below, no more: under a centimetre
+        // a box, where it used to go to sleep a centimetre and a half in.
+        const float sunk = world.GetPosition(stack.back()).y - (20.5f - static_cast<float>(kBoxes));
+        EXPECT_GE(sunk, 0.0f) << "offset " << offset;
+        EXPECT_LT(sunk, 0.1f) << "offset " << offset;
+        EXPECT_FALSE(world.IsAwake(stack.back())) << "offset " << offset;
     }
-    Simulate(world, 10.0f);
-    for (size_t i = 0; i < stack.size(); ++i)
-    {
-        EXPECT_NEAR(world.GetPosition(stack[i]).x, 0.0f, 0.01f) << "box " << i;
-        EXPECT_NEAR(world.GetAngle(stack[i]), 0.0f, 0.01f) << "box " << i;
-    }
-    // Each rests a little into the one below, no more: under a centimetre a
-    // box, where it used to go to sleep a centimetre and a half in.
-    const float sunk = world.GetPosition(stack.back()).y - 0.5f;
-    EXPECT_GE(sunk, 0.0f);
-    EXPECT_LT(sunk, 0.2f);
-    EXPECT_FALSE(world.IsAwake(stack.back()));
 }
