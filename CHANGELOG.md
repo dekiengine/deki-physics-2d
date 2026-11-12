@@ -37,15 +37,26 @@ alongside one that has them.
 - A body asleep, or moved by code and not spinning, is not given its sine
   and cosine again every step.
 - A contact's two points are solved together. Solved one after the other, a
-  box set down flat rocked from corner to corner, and a stack of 15 leant and
-  fell; a stack of 10 now stands, set down exactly or a little to one side.
-  A taller one stands or falls by the rounding of a sum: twenty boxes stand
-  on a desktop and fall on an ESP32-S3.
+  box set down flat rocked from corner to corner, and a stack leant and fell.
 - A bounce gives back the speed the two arrived with, before the step's
   gravity. A ball that keeps all its speed rose 4% higher with every bounce;
   it now comes back to where it fell from.
-- Resting bodies settle to the overlap they are allowed, 5 mm. What is left
-  of an overlap is worked out from where the two bodies are now, and removed
-  in four passes from alternate ends of the contacts, and a body still being
-  pushed apart does not go to sleep. A stack of 20 boxes went to sleep 16 mm
-  into each box below; it now rests 6 mm in.
+- A step is solved in sub-steps (`World::subSteps`, 4): each moves the
+  bodies a little and solves from where they then are, so the weight of the
+  top of a stack reaches the ground within the step. Several passes over one
+  whole step carried it a box a pass, and a stack of more than ten stood or
+  fell by the rounding of a sum: twenty boxes stood on a desktop and fell on
+  an ESP32-S3. Now ten stand however they are set down, twenty with six
+  sub-steps, the same on both. On a T-Deck a step of 30 boxes awake takes
+  2.1 ms, where it took 1.7.
+- An overlap is pushed out as a spring would, and the speed that takes is
+  taken back in the same sub-step, so it moves the bodies and adds no
+  energy. Bodies rest 2.5 to 5 mm into each other; a stack of 20 went to
+  sleep 16 mm into each box below.
+- Shapes within 5 mm of each other already have a contact, which lets them
+  close the gap and no more. Boxes set down exactly touching had none until
+  they had sunk into each other, a box a step: the top of a stack of 20 fell
+  half a metre. Nothing is reported, and a trigger is not entered, until two
+  shapes overlap.
+- A joint is set up from where its bodies are in each sub-step. A pendulum
+  keeps 97% of its swing over 20 seconds; it kept 90%.

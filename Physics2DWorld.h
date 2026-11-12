@@ -133,9 +133,9 @@ struct RayHit
 DEKI_PHYSICS2D_API int ConvexOutline(const Vec2* points, int count, Vec2* out);
 
 /// A small 2D physics world, sized for microcontrollers: convex shapes and
-/// joints, sort-and-sweep along X, a few solver iterations, and no allocation
-/// once the scene has settled. It knows nothing about the engine, so its
-/// behaviour is unit tested alone.
+/// joints, sort-and-sweep along X, a step solved in a few sub-steps, and no
+/// allocation once the scene has settled. It knows nothing about the engine,
+/// so its behaviour is unit tested alone.
 ///
 /// Steps are fixed: Step() banks the frame's time and runs whole steps of
 /// `fixedStep`, so a game behaves the same at 20 FPS as at 60. The number of
@@ -147,7 +147,7 @@ public:
     Vec2 gravity{ 0.0f, -9.81f };  // the engine's world: metres, +Y up
     float fixedStep = 1.0f / 60.0f;
     int maxStepsPerFrame = 4;
-    int velocityIterations = 6;
+    int subSteps = 4;  // how many times a step moves and solves; more holds taller stacks
     bool allowSleep = true;
 
     BodyHandle CreateBody(const BodyDef& def);
@@ -222,6 +222,10 @@ private:
         float angularDamping = 0.0f;
         float thinnest = 0.0f;   // of its solid shapes, from the middle to the nearest side
         float sleepTime = 0.0f;  // how long it has been nearly still
+        // A fast body: where it was before it moved this step.
+        Vec2 from;
+        float fromAngle = 0.0f;
+        bool swept = false;
         float islandTime = 0.0f;
         uint32_t island = 0;  // who it sleeps with
         uint32_t jointCount = 0;
@@ -257,6 +261,15 @@ private:
         bool boundsValid = false;
         bool alive = false;
     };
+    // How an overlap is pushed out (MakeSoft): the share of it a second
+    // removes, how much the push gives under itself, as a spring does (0: not
+    // at all), and the share of a push that is then made.
+    struct Soft
+    {
+        float rate = 0.0f;
+        float spring = 0.0f;
+        float share = 1.0f;
+    };
     struct ContactPoint
     {
         Vec2 position;
@@ -265,7 +278,8 @@ private:
         Vec2 toA, toB;
         float normalMass = 0.0f;
         float tangentMass = 0.0f;
-        float bounce = 0.0f;
+        float bounce = 0.0f;  // the speed to part at after a bounce
+        float most = 0.0f;    // the largest push of this step: none, no bounce
         float normalImpulse = 0.0f;
         float tangentImpulse = 0.0f;
     };
@@ -282,10 +296,13 @@ private:
         // From A to B, and their angles, as the overlap was measured.
         Vec2 apart;
         float angleA = 0.0f, angleB = 0.0f;
+        Soft soft;
         // Its two points solved together (SolvePair): how a push at one
-        // moves each, and one over the determinant of that.
+        // moves each, and one over the determinant of that, plain and with
+        // both pushes springs.
         bool paired = false;
-        float k11 = 0.0f, k12 = 0.0f, k22 = 0.0f, invDet = 0.0f;
+        float k11 = 0.0f, k12 = 0.0f, k22 = 0.0f;
+        float invDet = 0.0f, invDetSprung = 0.0f;
         ContactPoint points[2];
     };
     struct Joint
@@ -339,16 +356,22 @@ private:
     // Every shape's box where its body is now, and the shapes in order along X.
     void RefreshSweep();
     void FindContacts();
+    // Whether the two overlap, not only come near enough for a contact.
+    static bool Touches(const Manifold& contact);
+    static Soft MakeSoft(float hertz, float seconds);
     void PrepareContact(Manifold& contact);
-    void WarmStart(Manifold& contact);
-    void SolveVelocity(Manifold& contact, bool reverse);
-    void SolvePair(Manifold& contact, Body& a, Body& b);
-    void CorrectPositions();
+    void TakeLastPushes(Manifold& contact);
+    void WarmStart(const Manifold& contact);
+    void SolveContact(Manifold& contact, float perSecond, bool pushOut, bool reverse);
+    void SolvePair(Manifold& contact, Body& a, Body& b, float closing1, float closing2, float spring1, float spring2);
+    void Bounce(Manifold& contact);
     void PrepareJoint(Joint& joint, float dt);
-    void SolveJoint(Joint& joint);
+    void WarmStartJoint(const Joint& joint);
+    void SolveJoint(Joint& joint, float seconds);
     bool IsFast(const Body& body, float dt) const;
-    void SweepBody(uint32_t bodyIndex, float dt);
-    void IntegratePositions(float dt);
+    void SweepBody(uint32_t bodyIndex);
+    void IntegratePositions(float seconds);
+    void SweepFastBodies();
     uint32_t FindIsland(uint32_t bodyIndex);
     void JoinIslands(uint32_t a, uint32_t b);
     void UpdateSleep(float dt);
@@ -383,6 +406,7 @@ private:
     std::vector<uint64_t> m_ReportBefore;
     Body m_Ground;  // what a joint with no second body pins to
     Vec2 m_LastGravity{ 0.0f, -9.81f };
+    Soft m_Soft, m_SoftAgainstFixed;
     float m_Banked = 0.0f;
     size_t m_LiveBodies = 0;
     size_t m_LiveShapes = 0;

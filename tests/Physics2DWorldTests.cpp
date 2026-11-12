@@ -1259,35 +1259,95 @@ TEST(Physics2DWorld, ABallThatKeepsAllItsSpeedComesBackToWhereItFellFrom)
     EXPECT_EQ(bounces, 9);
 }
 
+namespace
+{
+// Boxes one on the other, each `offset` to one side of the last or the other:
+// whether they are still so stacked, and asleep, half a minute on (a stack
+// set down well to one side sways a little for a quarter of one).
+void ExpectStackStands(int boxes, float offset, int subSteps)
+{
+    TestWorld world;
+    world.subSteps = subSteps;
+    AddBox(world, BodyType::Static, { 0.0f, 20.5f }, 20.0f, 0.5f);
+    std::vector<BodyHandle> stack;
+    for (int i = 0; i < boxes; ++i)
+    {
+        const float x = offset * static_cast<float>(i % 3 - 1);
+        stack.push_back(AddBox(world, BodyType::Dynamic, { x, 19.5f - static_cast<float>(i) }));
+    }
+    Simulate(world, 30.0f);
+    const auto what = [&]() { return testing::Message() << boxes << " boxes, offset " << offset; };
+    for (size_t i = 0; i < stack.size(); ++i)
+    {
+        EXPECT_NEAR(world.GetPosition(stack[i]).x, 0.0f, offset + 0.1f) << "box " << i << " of " << what();
+        EXPECT_NEAR(world.GetAngle(stack[i]), 0.0f, 0.02f) << "box " << i << " of " << what();
+    }
+    // Each rests a little into the one below, no more: under a centimetre.
+    const float sunk = world.GetPosition(stack.back()).y - (20.5f - static_cast<float>(boxes));
+    EXPECT_GE(sunk, 0.0f) << what();
+    EXPECT_LT(sunk, 0.008f * static_cast<float>(boxes)) << what();
+    EXPECT_FALSE(world.IsAwake(stack.back())) << what();
+}
+}  // namespace
+
 TEST(Physics2DWorld, ATallStackStands)
 {
-    // Ten boxes, each on the one below, set down exactly or a little to one
-    // side: a contact's two points are solved together, so none rocks on its
-    // corners and the stack does not lean. (Ten is what the solver's passes
-    // carry whatever the order of the contacts and the processor's rounding;
-    // a stack of twenty stands or falls by the last bit of a sum.)
-    constexpr int kBoxes = 10;
-    for (const float offset : { 0.0f, 0.001f, 0.02f, 0.05f })
+    // Ten boxes, set down exactly or to one side. The step is solved in
+    // sub-steps, so the weight of the top box reaches the ground within the
+    // step; a contact's two points are solved together, so no box rocks on
+    // its corners.
+    for (const float offset : { 0.0f, 0.00001f, 0.001f, 0.02f, 0.05f, 0.1f, 0.2f })
     {
-        TestWorld world;
-        AddBox(world, BodyType::Static, { 0.0f, 20.5f }, 20.0f, 0.5f);
-        std::vector<BodyHandle> stack;
-        for (int i = 0; i < kBoxes; ++i)
-        {
-            const float x = offset * static_cast<float>(i % 3 - 1);
-            stack.push_back(AddBox(world, BodyType::Dynamic, { x, 19.5f - static_cast<float>(i) }));
-        }
-        Simulate(world, 10.0f);
-        for (size_t i = 0; i < stack.size(); ++i)
-        {
-            EXPECT_NEAR(world.GetPosition(stack[i]).x, 0.0f, offset + 0.05f) << "box " << i << ", offset " << offset;
-            EXPECT_NEAR(world.GetAngle(stack[i]), 0.0f, 0.02f) << "box " << i << ", offset " << offset;
-        }
-        // Each rests a little into the one below, no more: under a centimetre
-        // a box, where it used to go to sleep a centimetre and a half in.
-        const float sunk = world.GetPosition(stack.back()).y - (20.5f - static_cast<float>(kBoxes));
-        EXPECT_GE(sunk, 0.0f) << "offset " << offset;
-        EXPECT_LT(sunk, 0.1f) << "offset " << offset;
-        EXPECT_FALSE(world.IsAwake(stack.back())) << "offset " << offset;
+        ExpectStackStands(10, offset, World().subSteps);
     }
+}
+
+TEST(Physics2DWorld, ATallerStackStandsWithMoreSubSteps)
+{
+    for (const float offset : { 0.0f, 0.00001f, 0.001f, 0.02f, 0.05f, 0.1f, 0.2f })
+    {
+        ExpectStackStands(20, offset, 8);
+    }
+}
+
+TEST(Physics2DWorld, BoxesSetDownTouchingDoNotFallIntoEachOther)
+{
+    // Exactly touching is not yet overlapping, but near enough for a contact:
+    // without one a stack fell into itself a box a step, the top one half a
+    // metre.
+    TestWorld world;
+    AddBox(world, BodyType::Static, { 0.0f, 20.5f }, 20.0f, 0.5f);
+    BodyHandle top;
+    for (int i = 0; i < 20; ++i)
+    {
+        top = AddBox(world, BodyType::Dynamic, { 0.0f, 19.5f - static_cast<float>(i) });
+    }
+    float deepest = 0.0f;
+    for (int step = 0; step < 120; ++step)
+    {
+        world.Step(1.0f / 60.0f);
+        deepest = std::max(deepest, world.GetPosition(top).y - 0.5f);
+    }
+    EXPECT_LT(deepest, 0.2f);
+}
+
+TEST(Physics2DWorld, NearIsNotYetTouching)
+{
+    // A box a few millimetres off the ground has a contact, so it is let
+    // down and not dropped, but nothing is reported until the two overlap.
+    World world;
+    world.gravity = { 0.0f, 0.0f };
+    AddBox(world, BodyType::Static, { 0.0f, 10.5f }, 10.0f, 0.5f);
+    const BodyHandle box = AddBox(world, BodyType::Dynamic, { 0.0f, 9.497f });
+    int began = 0;
+    world.onContactBegin = [&](const Contact&) { ++began; };
+    Simulate(world, 0.5f);
+    EXPECT_EQ(began, 0);
+    EXPECT_NEAR(world.GetPosition(box).y, 9.497f, 1e-4f);
+
+    world.gravity = { 0.0f, 9.81f };
+    Simulate(world, 0.5f);
+    EXPECT_EQ(began, 1);
+    EXPECT_GT(world.GetPosition(box).y, 9.5f);
+    EXPECT_LT(world.GetPosition(box).y, 9.505f);
 }
