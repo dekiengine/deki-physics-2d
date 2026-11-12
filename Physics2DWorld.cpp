@@ -1,6 +1,7 @@
 #include "Physics2DWorld.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 
 namespace DekiPhysics2D
@@ -43,6 +44,22 @@ constexpr int kMaxSweepSteps = 32;
 constexpr int kSweepRefinements = 5;
 constexpr uint32_t kNoBody = 0xFFFFFFFFu;
 constexpr float kInfinity = 1e30f;
+// One over a hull's number of points, without a division.
+constexpr float kOneOver[kMaxPolygonPoints + 1] = { 0.0f,        1.0f,        1.0f / 2.0f, 1.0f / 3.0f, 1.0f / 4.0f,
+                                                    1.0f / 5.0f, 1.0f / 6.0f, 1.0f / 7.0f, 1.0f / 8.0f };
+
+// One over `x`, for an x above zero, by multiplying. A processor with no
+// divide instruction for floats (an ESP32-S3) calls a routine for every
+// division, many times slower than this: a first guess from the number's
+// bits, which each of three rounds brings twice as many digits closer, to
+// the last few bits of a float.
+inline float Inverse(float x)
+{
+    float guess = std::bit_cast<float>(0x7EF311C7u - std::bit_cast<uint32_t>(x));
+    guess = guess * (2.0f - x * guess);
+    guess = guess * (2.0f - x * guess);
+    return guess * (2.0f - x * guess);
+}
 
 float Dot(Vec2 a, Vec2 b)
 {
@@ -153,6 +170,7 @@ struct World::Hull
 {
     Vec2 points[kMaxPolygonPoints];
     Vec2 normals[kMaxPolygonPoints];
+    Vec2 middle;  // the mean of its points: somewhere inside it
     int count = 0;
     float radius = 0.0f;
 };
@@ -397,7 +415,7 @@ void World::RemoveShape(ShapeHandle handle)
     // and is told so now: nothing else would ever report the pair again.
     auto involves = [&](uint64_t key)
     { return static_cast<uint32_t>(key >> 32) == handle.index || static_cast<uint32_t>(key) == handle.index; };
-    for (uint64_t key : m_Touching)
+    for (uint64_t key : m_WasTouching)
     {
         if (involves(key))
         {
@@ -409,7 +427,7 @@ void World::RemoveShape(ShapeHandle handle)
     }
     if (onContactEnd)
     {
-        for (uint64_t key : m_Touching)
+        for (uint64_t key : m_WasTouching)
         {
             if (involves(key))
             {
@@ -417,7 +435,6 @@ void World::RemoveShape(ShapeHandle handle)
             }
         }
     }
-    m_Touching.erase(std::remove_if(m_Touching.begin(), m_Touching.end(), involves), m_Touching.end());
     m_WasTouching.erase(std::remove_if(m_WasTouching.begin(), m_WasTouching.end(), involves), m_WasTouching.end());
     // And its contacts go with it: a shape made later takes its place in the
     // list, and would start from the pushes this one was held with.
@@ -830,7 +847,7 @@ void World::Wake(uint32_t bodyIndex)
 
 void World::WakeTouching(uint32_t bodyIndex)
 {
-    for (uint64_t key : m_Touching)
+    for (uint64_t key : m_WasTouching)
     {
         const uint32_t a = m_Shapes[static_cast<uint32_t>(key >> 32)].body;
         const uint32_t b = m_Shapes[static_cast<uint32_t>(key)].body;
@@ -885,13 +902,16 @@ void World::MakeHull(const Shape& shape, Hull& out) const
     const float s = body.sinAngle;
     out.count = shape.count;
     out.radius = shape.radius;
+    Vec2 sum{};
     for (int i = 0; i < shape.count; ++i)
     {
         const Vec2 p = Sub(shape.points[i], body.centre);
         const Vec2 n = shape.normals[i];
         out.points[i] = { body.position.x + p.x * c - p.y * s, body.position.y + p.x * s + p.y * c };
         out.normals[i] = { n.x * c - n.y * s, n.x * s + n.y * c };
+        sum = Add(sum, out.points[i]);
     }
+    out.middle = Scale(sum, kOneOver[shape.count]);
 }
 
 // The incident side of one hull clipped against a face of the other. Two
@@ -927,7 +947,7 @@ bool World::ClipFace(const Hull& reference, const Hull& incident, int face, bool
     // Clip that side to the face's width.
     const Vec2 edge = Sub(v1, v0);
     const float width = std::sqrt(Dot(edge, edge));
-    const Vec2 tangent = Scale(edge, 1.0f / width);
+    const Vec2 tangent = Scale(edge, Inverse(width));
     auto clip = [&](float sign, float limit)
     {
         const float d0 = sign * Dot(Sub(p0, v0), tangent) - limit;
@@ -938,11 +958,11 @@ bool World::ClipFace(const Hull& reference, const Hull& incident, int face, bool
         }
         if (d0 > 0.0f)
         {
-            p0 = Add(p0, Scale(Sub(p1, p0), d0 / (d0 - d1)));
+            p0 = Add(p0, Scale(Sub(p1, p0), d0 * Inverse(d0 - d1)));
         }
         else if (d1 > 0.0f)
         {
-            p1 = Add(p1, Scale(Sub(p0, p1), d1 / (d1 - d0)));
+            p1 = Add(p1, Scale(Sub(p0, p1), d1 * Inverse(d1 - d0)));
         }
         return true;
     };
@@ -989,6 +1009,14 @@ bool World::CollideHulls(const Hull& a, const Hull& b, Manifold& out)
         const float bias = isA ? 0.0f : -1e-4f;
         for (int face = 0; face < reference.count; ++face)
         {
+            // No point of the other hull is further out through this face
+            // than its middle is: a face the middle is too far behind cannot
+            // be the one, and is not measured.
+            const float middle = Dot(reference.normals[face], Sub(other.middle, reference.points[face]));
+            if (middle <= std::min(best - bias, totalRadius + kContactMargin))
+            {
+                continue;
+            }
             float separation = kInfinity;
             for (int i = 0; i < other.count; ++i)
             {
@@ -1083,7 +1111,7 @@ bool World::CollideHulls(const Hull& a, const Hull& b, Manifold& out)
         return true;
     }
 
-    out.normal = distance > 1e-6f ? Scale(Sub(onB, onA), 1.0f / distance) : Vec2{ 0.0f, 1.0f };
+    out.normal = distance > 1e-6f ? Scale(Sub(onB, onA), Inverse(distance)) : Vec2{ 0.0f, 1.0f };
     out.pointCount = 1;
     out.points[0].position = Add(onA, Scale(out.normal, a.radius));
     out.points[0].penetration = totalRadius - distance;
@@ -1118,7 +1146,8 @@ void World::PrepareContact(Manifold& contact)
     const Shape& sb = m_Shapes[contact.shapeB];
     const Body& a = m_Bodies[sa.body];
     const Body& b = m_Bodies[sb.body];
-    const Vec2 tangent = { -contact.normal.y, contact.normal.x };
+    const Vec2 normal = contact.normal;
+    const Vec2 tangent = { -normal.y, normal.x };
     const float bounciness = std::max(sa.bounciness, sb.bounciness);
     // Kept for the passes that follow: each would find the two shapes again
     // for their bodies, and take the root for the friction every time.
@@ -1130,29 +1159,33 @@ void World::PrepareContact(Manifold& contact)
     contact.angleA = a.angle;
     contact.angleB = b.angle;
     contact.friction = std::sqrt(sa.friction * sb.friction);
-    contact.soft = a.invMass == 0.0f || b.invMass == 0.0f ? m_SoftAgainstFixed : m_Soft;
+    contact.againstFixed = a.invMass == 0.0f || b.invMass == 0.0f;
 
+    const float invMass = a.invMass + b.invMass;
     for (int i = 0; i < contact.pointCount; ++i)
     {
         ContactPoint& point = contact.points[i];
-        point.toA = Sub(point.position, a.position);
-        point.toB = Sub(point.position, b.position);
-        const float rnA = Cross(point.toA, contact.normal);
-        const float rnB = Cross(point.toB, contact.normal);
-        const float rtA = Cross(point.toA, tangent);
-        const float rtB = Cross(point.toB, tangent);
-        const float invN = a.invMass + b.invMass + a.invInertia * rnA * rnA + b.invInertia * rnB * rnB;
-        const float invT = a.invMass + b.invMass + a.invInertia * rtA * rtA + b.invInertia * rtB * rtB;
-        point.normalMass = invN > 0.0f ? 1.0f / invN : 0.0f;
-        point.tangentMass = invT > 0.0f ? 1.0f / invT : 0.0f;
+        // A pass needs the point only as these four numbers: how a turn of
+        // either body moves it along the normal, and along the tangent.
+        const Vec2 toA = Sub(point.position, a.position);
+        const Vec2 toB = Sub(point.position, b.position);
+        point.leverA = Cross(toA, normal);
+        point.leverB = Cross(toB, normal);
+        point.slideA = Cross(toA, tangent);
+        point.slideB = Cross(toB, tangent);
+        const float invN =
+            invMass + a.invInertia * point.leverA * point.leverA + b.invInertia * point.leverB * point.leverB;
+        const float invT =
+            invMass + a.invInertia * point.slideA * point.slideA + b.invInertia * point.slideB * point.slideB;
+        point.normalMass = invN > 0.0f ? Inverse(invN) : 0.0f;
+        point.tangentMass = invT > 0.0f ? Inverse(invT) : 0.0f;
 
         // A bounce gives back the speed the two met with: the speed they
         // arrived at, before this step's gravity and forces were added. With
         // those in it, every bounce returned a step of gravity more than it
         // took, and a ball that keeps all its speed rose higher each time.
-        const Vec2 va = Add(a.arriving, Perp(a.arrivingSpin, point.toA));
-        const Vec2 vb = Add(b.arriving, Perp(b.arrivingSpin, point.toB));
-        const float along = Dot(Sub(vb, va), contact.normal);
+        const float along =
+            Dot(Sub(b.arriving, a.arriving), normal) + b.arrivingSpin * point.leverB - a.arrivingSpin * point.leverA;
         point.bounce = -along > kBounceThreshold ? -bounciness * along : 0.0f;
         point.most = 0.0f;
     }
@@ -1162,13 +1195,11 @@ void World::PrepareContact(Manifold& contact)
     contact.paired = false;
     if (contact.pointCount == 2)
     {
-        const float rn1A = Cross(contact.points[0].toA, contact.normal);
-        const float rn1B = Cross(contact.points[0].toB, contact.normal);
-        const float rn2A = Cross(contact.points[1].toA, contact.normal);
-        const float rn2B = Cross(contact.points[1].toB, contact.normal);
-        const float k11 = a.invMass + b.invMass + a.invInertia * rn1A * rn1A + b.invInertia * rn1B * rn1B;
-        const float k22 = a.invMass + b.invMass + a.invInertia * rn2A * rn2A + b.invInertia * rn2B * rn2B;
-        const float k12 = a.invMass + b.invMass + a.invInertia * rn1A * rn2A + b.invInertia * rn1B * rn2B;
+        const ContactPoint& p1 = contact.points[0];
+        const ContactPoint& p2 = contact.points[1];
+        const float k11 = invMass + a.invInertia * p1.leverA * p1.leverA + b.invInertia * p1.leverB * p1.leverB;
+        const float k22 = invMass + a.invInertia * p2.leverA * p2.leverA + b.invInertia * p2.leverB * p2.leverB;
+        const float k12 = invMass + a.invInertia * p1.leverA * p2.leverA + b.invInertia * p1.leverB * p2.leverB;
         const float det = k11 * k22 - k12 * k12;
         if (k11 * k11 < kMaxPairCondition * det)
         {
@@ -1178,20 +1209,24 @@ void World::PrepareContact(Manifold& contact)
             contact.k22 = k22;
             // Worked out here for the two usual cases, neither point a
             // spring or both: a division a pass otherwise.
-            const float stiff = 1.0f + contact.soft.spring;
-            contact.invDet = 1.0f / det;
-            contact.invDetSprung = 1.0f / (k11 * k22 * stiff * stiff - k12 * k12);
+            const float stiff = 1.0f + SoftOf(contact).spring;
+            contact.invDet = Inverse(det);
+            contact.invDetSprung = Inverse(k11 * k22 * stiff * stiff - k12 * k12);
         }
     }
 }
 
 const World::Manifold* World::FindLastManifold(uint64_t key) const
 {
-    const auto last = std::lower_bound(m_LastManifolds.begin(), m_LastManifolds.end(), key,
-                                       [](const Manifold& m, uint64_t k) { return PairKey(m.shapeA, m.shapeB) < k; });
-    return last != m_LastManifolds.end() && PairKey(last->shapeA, last->shapeB) == key ? &*last : nullptr;
+    const auto last = std::lower_bound(m_LastOrder.begin(), m_LastOrder.end(), key,
+                                       [](const LastKey& entry, uint64_t k) { return entry.key < k; });
+    return last != m_LastOrder.end() && last->key == key ? &m_LastManifolds[last->index] : nullptr;
 }
 
+// A contact starts from the pushes it ended the last step with, and its two
+// bodies are given what those add to their speeds, as every push of the
+// step then is (Body::held): each sub-step starts from it, without going
+// over the contacts again.
 void World::TakeLastPushes(Manifold& contact)
 {
     const Manifold* last = FindLastManifold(PairKey(contact.shapeA, contact.shapeB));
@@ -1199,26 +1234,22 @@ void World::TakeLastPushes(Manifold& contact)
     {
         return;
     }
-    for (int i = 0; i < contact.pointCount; ++i)
-    {
-        contact.points[i].normalImpulse = last->points[i].normalImpulse;
-        contact.points[i].tangentImpulse = last->points[i].tangentImpulse;
-    }
-}
-
-void World::WarmStart(const Manifold& contact)
-{
     Body& a = m_Bodies[contact.bodyA];
     Body& b = m_Bodies[contact.bodyB];
-    const Vec2 tangent = { -contact.normal.y, contact.normal.x };
+    const Vec2 normal = contact.normal;
+    const Vec2 tangent = { -normal.y, normal.x };
     for (int i = 0; i < contact.pointCount; ++i)
     {
-        const ContactPoint& point = contact.points[i];
-        const Vec2 impulse = Add(Scale(contact.normal, point.normalImpulse), Scale(tangent, point.tangentImpulse));
-        a.velocity = Sub(a.velocity, Scale(impulse, a.invMass));
-        a.angularVelocity -= a.invInertia * Cross(point.toA, impulse);
-        b.velocity = Add(b.velocity, Scale(impulse, b.invMass));
-        b.angularVelocity += b.invInertia * Cross(point.toB, impulse);
+        ContactPoint& point = contact.points[i];
+        point.normalImpulse = last->points[i].normalImpulse;
+        point.tangentImpulse = last->points[i].tangentImpulse;
+        const Vec2 impulse = Add(Scale(normal, point.normalImpulse), Scale(tangent, point.tangentImpulse));
+        const float turnA = point.leverA * point.normalImpulse + point.slideA * point.tangentImpulse;
+        const float turnB = point.leverB * point.normalImpulse + point.slideB * point.tangentImpulse;
+        a.held = Sub(a.held, Scale(impulse, a.invMass));
+        a.heldSpin -= a.invInertia * turnA;
+        b.held = Add(b.held, Scale(impulse, b.invMass));
+        b.heldSpin += b.invInertia * turnB;
     }
 }
 
@@ -1232,40 +1263,45 @@ void World::SolveContact(Manifold& contact, float perSecond, bool pushOut, bool 
     Body& b = m_Bodies[contact.bodyB];
     const Vec2 normal = contact.normal;
     const Vec2 tangent = { -normal.y, normal.x };
-    const float mu = contact.friction;
+    const Soft& soft = SoftOf(contact);
+    const float massA = a.invMass, massB = b.invMass, inertiaA = a.invInertia, inertiaB = b.invInertia;
 
-    auto apply = [&](const ContactPoint& point, Vec2 impulse)
+    // The two bodies' speeds, worked on here and put back at the end.
+    Vec2 speedA = a.velocity, speedB = b.velocity;
+    float spinA = a.angularVelocity, spinB = b.angularVelocity;
+
+    // How fast a point's two sides part along the normal, and slide along
+    // the tangent; and a push along each.
+    auto parting = [&](const ContactPoint& point)
     {
-        a.velocity = Sub(a.velocity, Scale(impulse, a.invMass));
-        a.angularVelocity -= a.invInertia * Cross(point.toA, impulse);
-        b.velocity = Add(b.velocity, Scale(impulse, b.invMass));
-        b.angularVelocity += b.invInertia * Cross(point.toB, impulse);
+        return (speedB.x - speedA.x) * normal.x + (speedB.y - speedA.y) * normal.y + spinB * point.leverB -
+               spinA * point.leverA;
     };
-    auto relative = [&](const ContactPoint& point)
+    auto sliding = [&](const ContactPoint& point)
     {
-        return Sub(Add(b.velocity, Perp(b.angularVelocity, point.toB)),
-                   Add(a.velocity, Perp(a.angularVelocity, point.toA)));
+        return (speedB.x - speedA.x) * tangent.x + (speedB.y - speedA.y) * tangent.y + spinB * point.slideB -
+               spinA * point.slideA;
+    };
+    auto push = [&](Vec2 along, float leverA, float leverB, float impulse)
+    {
+        speedA.x -= along.x * impulse * massA;
+        speedA.y -= along.y * impulse * massA;
+        spinA -= inertiaA * leverA * impulse;
+        speedB.x += along.x * impulse * massB;
+        speedB.y += along.y * impulse * massB;
+        spinB += inertiaB * leverB * impulse;
     };
 
     // How far the two have moved and turned since the overlap was measured.
-    const Vec2 moved = Sub(Sub(b.position, a.position), contact.apart);
+    const float moved = Dot(Sub(Sub(b.position, a.position), contact.apart), normal);
     const float turnedA = a.angle - contact.angleA;
     const float turnedB = b.angle - contact.angleB;
 
     // What a point is to do in this pass, from the gap between the two where
-    // they are now (below zero, an overlap): the speed to part at, and how
-    // much of a spring the push is (0: none, the point is simply stopped)
-    // with the share of a push that such a spring makes.
-    struct Aim
-    {
-        float speed = 0.0f;
-        float spring = 0.0f;
-        float share = 1.0f;
-    };
+    // they are now (below zero, an overlap).
     auto aimOf = [&](const ContactPoint& point)
     {
-        const Vec2 here = Add(moved, Sub(Perp(turnedB, point.toB), Perp(turnedA, point.toA)));
-        const float gap = Dot(here, normal) - point.penetration;
+        const float gap = moved + turnedB * point.leverB - turnedA * point.leverA - point.penetration;
         Aim aim;
         if (gap > -kRestDepth)
         {
@@ -1275,9 +1311,9 @@ void World::SolveContact(Manifold& contact, float perSecond, bool pushOut, bool 
         }
         else if (gap < -kSlop && pushOut)
         {
-            aim.speed = std::min(-contact.soft.rate * (gap + kSlop), kMaxPushSpeed);
-            aim.spring = contact.soft.spring;
-            aim.share = contact.soft.share;
+            aim.speed = std::min(-soft.rate * (gap + kSlop), kMaxPushSpeed);
+            aim.spring = soft.spring;
+            aim.share = soft.share;
         }
         return aim;
     };
@@ -1290,11 +1326,16 @@ void World::SolveContact(Manifold& contact, float perSecond, bool pushOut, bool 
         {
             return;
         }
-        const float slide = Dot(relative(point), tangent);
-        const float limit = mu * point.normalImpulse;
-        const float total = Clamp(point.tangentImpulse - point.tangentMass * slide, -limit, limit);
-        apply(point, Scale(tangent, total - point.tangentImpulse));
+        const float limit = contact.friction * point.normalImpulse;
+        const float total = Clamp(point.tangentImpulse - point.tangentMass * sliding(point), -limit, limit);
+        push(tangent, point.slideA, point.slideB, total - point.tangentImpulse);
         point.tangentImpulse = total;
+    };
+    auto setPush = [&](ContactPoint& point, float total)
+    {
+        push(normal, point.leverA, point.leverB, total - point.normalImpulse);
+        point.normalImpulse = total;
+        point.most = std::max(point.most, total);
     };
 
     if (contact.paired)
@@ -1307,29 +1348,43 @@ void World::SolveContact(Manifold& contact, float perSecond, bool pushOut, bool 
         ContactPoint& p2 = contact.points[1];
         const Aim aim1 = aimOf(p1);
         const Aim aim2 = aimOf(p2);
-        SolvePair(contact, a, b, Dot(relative(p1), normal) - aim1.speed, Dot(relative(p2), normal) - aim2.speed,
-                  aim1.spring, aim2.spring);
-        return;
+        float push1 = p1.normalImpulse, push2 = p2.normalImpulse;
+        SolvePair(contact, parting(p1), parting(p2), aim1, aim2, push1, push2);
+        setPush(p1, push1);
+        setPush(p2, push2);
     }
-
-    // Solved in turns from either end: always starting at the same corner
-    // leaves a little spin behind each step, and a stack walks off sideways.
-    for (int k = 0; k < contact.pointCount; ++k)
+    else
     {
-        ContactPoint& point = contact.points[reverse ? contact.pointCount - 1 - k : k];
-        friction(point);
+        // Solved in turns from either end: always starting at the same corner
+        // leaves a little spin behind each step, and a stack walks off
+        // sideways.
+        for (int k = 0; k < contact.pointCount; ++k)
+        {
+            ContactPoint& point = contact.points[reverse ? contact.pointCount - 1 - k : k];
+            friction(point);
 
-        // The running total is what is limited, so a later pass can take back
-        // what an earlier one overdid. A spring makes a share of the push
-        // and gives back a share of the push so far.
-        const Aim aim = aimOf(point);
-        const float along = Dot(relative(point), normal);
-        const float change = (point.normalMass * (aim.speed - along) - aim.spring * point.normalImpulse) * aim.share;
-        const float total = std::max(point.normalImpulse + change, 0.0f);
-        apply(point, Scale(normal, total - point.normalImpulse));
-        point.normalImpulse = total;
-        point.most = std::max(point.most, total);
+            // The running total is what is limited, so a later pass can take
+            // back what an earlier one overdid. A spring makes a share of the
+            // push and gives back a share of the push so far.
+            const Aim aim = aimOf(point);
+            const float change =
+                (point.normalMass * (aim.speed - parting(point)) - aim.spring * point.normalImpulse) * aim.share;
+            setPush(point, std::max(point.normalImpulse + change, 0.0f));
+        }
     }
+
+    // What the pass added to each body's speed is added to what its contacts
+    // hold it with.
+    a.held.x += speedA.x - a.velocity.x;
+    a.held.y += speedA.y - a.velocity.y;
+    a.heldSpin += spinA - a.angularVelocity;
+    b.held.x += speedB.x - b.velocity.x;
+    b.held.y += speedB.y - b.velocity.y;
+    b.heldSpin += spinB - b.angularVelocity;
+    a.velocity = speedA;
+    a.angularVelocity = spinA;
+    b.velocity = speedB;
+    b.angularVelocity = spinB;
 }
 
 // The pushes of a contact's two points, found together. Each push must be
@@ -1337,65 +1392,55 @@ void World::SolveContact(Manifold& contact, float perSecond, bool pushOut, bool 
 // each undoes part of what the other did, and a box set down flat rocks from
 // corner to corner: a tall stack then leans and falls. Together there are
 // four cases (both push, either alone, neither), tried in that order; the
-// first that fits is the answer. `closing1` and `closing2` are how fast the
-// points close past what they are to part at, `spring1` and `spring2` how
-// much of a spring each push is.
-void World::SolvePair(Manifold& contact, Body& a, Body& b, float closing1, float closing2, float spring1, float spring2)
+// first that fits is the answer. `parting1` and `parting2` are how fast the
+// points part now, `aim1` and `aim2` what each is to do; `push1` and `push2`
+// come in as the pushes so far and go out as the new ones.
+void World::SolvePair(const Manifold& contact, float parting1, float parting2, const Aim& aim1, const Aim& aim2,
+                      float& push1, float& push2)
 {
-    ContactPoint& p1 = contact.points[0];
-    ContactPoint& p2 = contact.points[1];
-    // What the two would close at with no push at all.
-    const float had1 = p1.normalImpulse, had2 = p2.normalImpulse;
-    const float b1 = closing1 - (contact.k11 * had1 + contact.k12 * had2);
-    const float b2 = closing2 - (contact.k12 * had1 + contact.k22 * had2);
+    // What the two would close at, past what they are to part at, with no
+    // push at all.
+    const float b1 = parting1 - aim1.speed - (contact.k11 * push1 + contact.k12 * push2);
+    const float b2 = parting2 - aim2.speed - (contact.k12 * push1 + contact.k22 * push2);
     // A spring gives under its own push: more on the point's own term.
-    const float k11 = contact.k11 * (1.0f + spring1);
-    const float k22 = contact.k22 * (1.0f + spring2);
+    const float k11 = contact.k11 * (1.0f + aim1.spring);
+    const float k22 = contact.k22 * (1.0f + aim2.spring);
     const float k12 = contact.k12;
+    // What one point alone would push: one over its own term.
+    const float alone1 = -b1 * contact.points[0].normalMass * aim1.share;
+    const float alone2 = -b2 * contact.points[1].normalMass * aim2.share;
 
-    float x1 = had1, x2 = had2;
     // Both push.
-    const bool sprung = spring1 != 0.0f && spring2 != 0.0f;
-    const float invDet = sprung                               ? contact.invDetSprung
-                         : spring1 == 0.0f && spring2 == 0.0f ? contact.invDet
-                                                              : 1.0f / (k11 * k22 - k12 * k12);
+    const bool sprung = aim1.spring != 0.0f && aim2.spring != 0.0f;
+    const float invDet = sprung                                       ? contact.invDetSprung
+                         : aim1.spring == 0.0f && aim2.spring == 0.0f ? contact.invDet
+                                                                      : Inverse(k11 * k22 - k12 * k12);
     const float both1 = -(k22 * b1 - k12 * b2) * invDet;
     const float both2 = -(k11 * b2 - k12 * b1) * invDet;
     if (both1 >= 0.0f && both2 >= 0.0f)
     {
-        x1 = both1;
-        x2 = both2;
+        push1 = both1;
+        push2 = both2;
     }
     // Only the first pushes, and the second is not closing.
-    else if (-b1 >= 0.0f && k12 * (-b1 / k11) + b2 >= 0.0f)
+    else if (alone1 >= 0.0f && k12 * alone1 + b2 >= 0.0f)
     {
-        x1 = -b1 / k11;
-        x2 = 0.0f;
+        push1 = alone1;
+        push2 = 0.0f;
     }
     // Only the second.
-    else if (-b2 >= 0.0f && k12 * (-b2 / k22) + b1 >= 0.0f)
+    else if (alone2 >= 0.0f && k12 * alone2 + b1 >= 0.0f)
     {
-        x1 = 0.0f;
-        x2 = -b2 / k22;
+        push1 = 0.0f;
+        push2 = alone2;
     }
     // Neither, when both are parting by themselves.
     else if (b1 >= 0.0f && b2 >= 0.0f)
     {
-        x1 = 0.0f;
-        x2 = 0.0f;
+        push1 = 0.0f;
+        push2 = 0.0f;
     }
     // (When no case fits, which rounding allows, the pushes stay as they are.)
-
-    const Vec2 push1 = Scale(contact.normal, x1 - had1);
-    const Vec2 push2 = Scale(contact.normal, x2 - had2);
-    a.velocity = Sub(a.velocity, Scale(Add(push1, push2), a.invMass));
-    a.angularVelocity -= a.invInertia * (Cross(p1.toA, push1) + Cross(p2.toA, push2));
-    b.velocity = Add(b.velocity, Scale(Add(push1, push2), b.invMass));
-    b.angularVelocity += b.invInertia * (Cross(p1.toB, push1) + Cross(p2.toB, push2));
-    p1.normalImpulse = x1;
-    p2.normalImpulse = x2;
-    p1.most = std::max(p1.most, x1);
-    p2.most = std::max(p2.most, x2);
 }
 
 // A bounce gives back the speed the two met with, once the step has stopped
@@ -1404,6 +1449,7 @@ void World::Bounce(Manifold& contact)
 {
     Body& a = m_Bodies[contact.bodyA];
     Body& b = m_Bodies[contact.bodyB];
+    const Vec2 normal = contact.normal;
     for (int i = 0; i < contact.pointCount; ++i)
     {
         ContactPoint& point = contact.points[i];
@@ -1411,20 +1457,19 @@ void World::Bounce(Manifold& contact)
         {
             continue;
         }
-        const Vec2 speed = Sub(Add(b.velocity, Perp(b.angularVelocity, point.toB)),
-                               Add(a.velocity, Perp(a.angularVelocity, point.toA)));
-        const float along = Dot(speed, contact.normal);
+        const float along = Dot(Sub(b.velocity, a.velocity), normal) + b.angularVelocity * point.leverB -
+                            a.angularVelocity * point.leverA;
         const float total = std::max(point.normalImpulse + point.normalMass * (point.bounce - along), 0.0f);
-        const Vec2 impulse = Scale(contact.normal, total - point.normalImpulse);
+        const float change = total - point.normalImpulse;
         point.normalImpulse = total;
-        a.velocity = Sub(a.velocity, Scale(impulse, a.invMass));
-        a.angularVelocity -= a.invInertia * Cross(point.toA, impulse);
-        b.velocity = Add(b.velocity, Scale(impulse, b.invMass));
-        b.angularVelocity += b.invInertia * Cross(point.toB, impulse);
+        a.velocity = Sub(a.velocity, Scale(normal, change * a.invMass));
+        a.angularVelocity -= a.invInertia * point.leverA * change;
+        b.velocity = Add(b.velocity, Scale(normal, change * b.invMass));
+        b.angularVelocity += b.invInertia * point.leverB * change;
     }
 }
 
-void World::PrepareJoint(Joint& joint, float dt)
+void World::PrepareJoint(Joint& joint, float stepsPerSecond)
 {
     Body& a = m_Bodies[joint.bodyA];
     Body& b = BodyAt(joint.bodyB);
@@ -1442,12 +1487,13 @@ void World::PrepareJoint(Joint& joint, float dt)
             joint.axisImpulse = 0.0f;
             return;
         }
-        joint.axis = Scale(error, 1.0f / length);
+        joint.axis = Scale(error, Inverse(length));
         const float crA = Cross(joint.toA, joint.axis);
         const float crB = Cross(joint.toB, joint.axis);
         const float inverse = mA + mB + iA * crA * crA + iB * crB * crB;
-        joint.axisMass = inverse > 0.0f ? 1.0f / inverse : 0.0f;
-        joint.axisBias = Clamp(length - joint.length, -kMaxJointError, kMaxJointError) * kJointCorrection / dt;
+        joint.axisMass = inverse > 0.0f ? Inverse(inverse) : 0.0f;
+        joint.axisBias =
+            Clamp(length - joint.length, -kMaxJointError, kMaxJointError) * kJointCorrection * stepsPerSecond;
         return;
     }
 
@@ -1455,9 +1501,11 @@ void World::PrepareJoint(Joint& joint, float dt)
     joint.k12 = -iA * joint.toA.x * joint.toA.y - iB * joint.toB.x * joint.toB.y;
     joint.k22 = mA + mB + iA * joint.toA.x * joint.toA.x + iB * joint.toB.x * joint.toB.x;
     const float distance = std::sqrt(Dot(error, error));
-    const float keep = distance > kMaxJointError ? kMaxJointError / distance : 1.0f;
-    joint.pointBias = Scale(error, keep * kJointCorrection / dt);
-    joint.axialMass = iA + iB > 0.0f ? 1.0f / (iA + iB) : 0.0f;
+    const float keep = distance > kMaxJointError ? kMaxJointError * Inverse(distance) : 1.0f;
+    joint.pointBias = Scale(error, keep * kJointCorrection * stepsPerSecond);
+    joint.axialMass = iA + iB > 0.0f ? Inverse(iA + iB) : 0.0f;
+    const float det = joint.k11 * joint.k22 - joint.k12 * joint.k12;
+    joint.invDet = det > 0.0f ? Inverse(det) : 0.0f;
 
     int state = 0;
     joint.limitBias = 0.0f;
@@ -1467,12 +1515,12 @@ void World::PrepareJoint(Joint& joint, float dt)
         if (angle <= joint.lowerAngle)
         {
             state = 1;
-            joint.limitBias = (angle - joint.lowerAngle) * kJointCorrection / dt;
+            joint.limitBias = (angle - joint.lowerAngle) * kJointCorrection * stepsPerSecond;
         }
         else if (angle >= joint.upperAngle)
         {
             state = 2;
-            joint.limitBias = (angle - joint.upperAngle) * kJointCorrection / dt;
+            joint.limitBias = (angle - joint.upperAngle) * kJointCorrection * stepsPerSecond;
         }
     }
     if (state != joint.limitState)
@@ -1564,14 +1612,9 @@ void World::SolveJoint(Joint& joint, float seconds)
         joint.limitImpulse = total;
     }
 
-    const float det = joint.k11 * joint.k22 - joint.k12 * joint.k12;
-    if (det == 0.0f)
-    {
-        return;
-    }
     const Vec2 speed = Add(pointSpeed(), joint.pointBias);
-    const Vec2 impulse{ -(joint.k22 * speed.x - joint.k12 * speed.y) / det,
-                        -(joint.k11 * speed.y - joint.k12 * speed.x) / det };
+    const Vec2 impulse{ -(joint.k22 * speed.x - joint.k12 * speed.y) * joint.invDet,
+                        -(joint.k11 * speed.y - joint.k12 * speed.x) * joint.invDet };
     joint.pointImpulse = Add(joint.pointImpulse, impulse);
     applyLinear(impulse);
 }
@@ -1632,9 +1675,15 @@ void World::FindContacts()
 
     // Kept, sorted by pair, so this step's contacts can start from last step's
     // pushes: a stack is then already held up before the solver begins.
+    // Their order by pair is sorted, not the contacts: those are a good deal
+    // larger to move about.
     m_LastManifolds.swap(m_Manifolds);
-    std::sort(m_LastManifolds.begin(), m_LastManifolds.end(), [](const Manifold& x, const Manifold& y)
-              { return PairKey(x.shapeA, x.shapeB) < PairKey(y.shapeA, y.shapeB); });
+    m_LastOrder.clear();
+    for (uint32_t i = 0; i < m_LastManifolds.size(); ++i)
+    {
+        m_LastOrder.push_back({ PairKey(m_LastManifolds[i].shapeA, m_LastManifolds[i].shapeB), i });
+    }
+    std::sort(m_LastOrder.begin(), m_LastOrder.end(), [](const LastKey& x, const LastKey& y) { return x.key < y.key; });
 
     auto active = [](const Body& body)
     {
@@ -1693,20 +1742,22 @@ void World::FindContacts()
                     continue;
                 }
 
-                Manifold manifold{};
-                if (!Collide(a, b, manifold))
-                {
-                    continue;
-                }
+                // Worked out where it will stay, and taken off again when
+                // the two turn out apart or one is a trigger.
+                m_Manifolds.emplace_back();
+                const bool near = Collide(a, b, m_Manifolds.back());
                 // Near enough for a contact is not yet touching: nothing is
                 // reported, and a trigger is not entered.
-                if (Touches(manifold))
+                if (near && Touches(m_Manifolds.back()))
                 {
                     m_Touching.push_back(key);
                 }
-                if (solid)
+                if (!near || !solid)
                 {
-                    m_Manifolds.push_back(manifold);
+                    m_Manifolds.pop_back();
+                }
+                if (near && solid)
+                {
                     for (const uint32_t index : { sa.body, sb.body })
                     {
                         Body& body = m_Bodies[index];
@@ -1729,8 +1780,7 @@ bool World::IsFast(const Body& body, float dt) const
     {
         return false;
     }
-    const float reach = body.thinnest / dt;
-    return Dot(body.velocity, body.velocity) > reach * reach;
+    return Dot(body.velocity, body.velocity) * dt * dt > body.thinnest * body.thinnest;
 }
 
 // Takes a fast body along the path it went this step, in steps too short to
@@ -2015,6 +2065,8 @@ void World::FixedStep()
     {
         body.arriving = body.velocity;
         body.arrivingSpin = body.angularVelocity;
+        body.held = {};
+        body.heldSpin = 0.0f;
     }
 
     FindContacts();
@@ -2026,13 +2078,15 @@ void World::FixedStep()
     const int count = std::max(subSteps, 1);
     const float h = dt / static_cast<float>(count);
     const float perSecond = 1.0f / h;
+    const float stepsPerSecond = 1.0f / dt;
     m_Soft = MakeSoft(std::min(kContactHertz, 0.25f * perSecond), h);
     m_SoftAgainstFixed = MakeSoft(std::min(2.0f * kContactHertz, 0.5f * perSecond), h);
 
     auto jointIsAwake = [this](const Joint& joint)
     { return joint.alive && (m_Bodies[joint.bodyA].awake || (joint.bodyB != kNoBody && m_Bodies[joint.bodyB].awake)); };
     // Every contact starts from the pushes it ended the last step with: a
-    // stack is then already held up before the solver begins.
+    // stack is then already held up before the solver begins. Each sub-step
+    // gives a body its forces and what its contacts hold it with.
     for (Manifold& contact : m_Manifolds)
     {
         if (!contact.resting)
@@ -2064,9 +2118,10 @@ void World::FixedStep()
             body.velocity.y += (gravity.y * body.gravityScale + body.force.y * body.invMass) * h;
             body.angularVelocity += body.torque * body.invInertia * h;
             const float keep = std::max(0.0f, 1.0f - body.linearDamping * h);
-            body.velocity.x *= keep;
-            body.velocity.y *= keep;
-            body.angularVelocity *= std::max(0.0f, 1.0f - body.angularDamping * h);
+            body.velocity.x = body.velocity.x * keep + body.held.x;
+            body.velocity.y = body.velocity.y * keep + body.held.y;
+            body.angularVelocity =
+                body.angularVelocity * std::max(0.0f, 1.0f - body.angularDamping * h) + body.heldSpin;
         }
         // A joint is set up from where its bodies have got to and solved
         // once, each sub-step: set up once a step it held them to where they
@@ -2075,16 +2130,9 @@ void World::FixedStep()
         {
             if (jointIsAwake(joint))
             {
-                PrepareJoint(joint, dt);
+                PrepareJoint(joint, stepsPerSecond);
                 WarmStartJoint(joint);
                 SolveJoint(joint, h);
-            }
-        }
-        for (const Manifold& contact : m_Manifolds)
-        {
-            if (!contact.resting)
-            {
-                WarmStart(contact);
             }
         }
         solveContacts(true, step % 2 == 1);
@@ -2145,9 +2193,14 @@ void World::ReportContacts()
         }
     };
 
-    m_ReportNow = m_Touching;
-    m_ReportBefore = m_WasTouching;
-    m_WasTouching = m_Touching;
+    // The lists change hands, with one copy made: last step's pairs to
+    // report against, this step's to report, and to remember. A callback may
+    // remove a shape, which takes its pairs out of the remembered list, so
+    // the two reported from are the step's own.
+    m_ReportBefore.swap(m_WasTouching);
+    m_ReportNow.swap(m_Touching);
+    m_Touching.clear();
+    m_WasTouching = m_ReportNow;
     size_t i = 0, k = 0;
     while (i < m_ReportNow.size() || k < m_ReportBefore.size())
     {

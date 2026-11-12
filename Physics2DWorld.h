@@ -201,22 +201,28 @@ private:
     struct Hull;
     struct Body
     {
+        // What every solver pass reads and writes, kept together at the
+        // front so a pass touches as little memory as it can.
         Vec2 position;  // of its centre of mass, which is what the solver moves
-        Vec2 centre;    // that centre, from the object's origin in the body's own axes
         float angle = 0.0f;
-        float cosAngle = 1.0f;  // of `angle`, kept so a step computes each once
-        float sinAngle = 0.0f;
         Vec2 velocity;
         float angularVelocity = 0.0f;
+        // What the pushes of its contacts add to its speed in a sub-step.
+        Vec2 held;
+        float heldSpin = 0.0f;
+        float invMass = 0.0f;  // 0 unless dynamic
+        float invInertia = 0.0f;
+
+        Vec2 centre;            // its centre of mass, from the object's origin in the body's own axes
+        float cosAngle = 1.0f;  // of `angle`, kept so a step computes each once
+        float sinAngle = 0.0f;
         // What it had as the step began, before gravity and forces: the speed a
         // contact bounces from.
         Vec2 arriving;
         float arrivingSpin = 0.0f;
         Vec2 force;
         float torque = 0.0f;
-        float mass = 0.0f;  // as asked for; invMass is 0 unless dynamic
-        float invMass = 0.0f;
-        float invInertia = 0.0f;
+        float mass = 0.0f;  // as asked for
         float gravityScale = 1.0f;
         float linearDamping = 0.0f;
         float angularDamping = 0.0f;
@@ -270,21 +276,37 @@ private:
         float spring = 0.0f;
         float share = 1.0f;
     };
+    // What a contact point is to do in a pass: the speed to part at, how
+    // much of a spring the push is (0: none, the point is simply stopped)
+    // and the share of a push that such a spring makes.
+    struct Aim
+    {
+        float speed = 0.0f;
+        float spring = 0.0f;
+        float share = 1.0f;
+    };
     struct ContactPoint
     {
-        Vec2 position;
         float penetration = 0.0f;
-        // Prepared once per step, used by every solver pass.
-        Vec2 toA, toB;
+        // Prepared once per step, used by every solver pass: how a turn of
+        // either body moves the point along the normal and along the
+        // tangent.
+        float leverA = 0.0f, leverB = 0.0f;
+        float slideA = 0.0f, slideB = 0.0f;
         float normalMass = 0.0f;
         float tangentMass = 0.0f;
-        float bounce = 0.0f;  // the speed to part at after a bounce
-        float most = 0.0f;    // the largest push of this step: none, no bounce
         float normalImpulse = 0.0f;
         float tangentImpulse = 0.0f;
+        float most = 0.0f;  // the largest push of this step: none, no bounce
+        // Not read by a pass.
+        float bounce = 0.0f;  // the speed to part at after a bounce
+        Vec2 position;
     };
     struct Manifold
     {
+        // Written by hand so a new one is not cleared first: Collide fills in
+        // what it does not start with.
+        Manifold() {}
         uint32_t shapeA, shapeB;
         Vec2 normal;  // from A to B
         int pointCount = 0;
@@ -296,7 +318,7 @@ private:
         // From A to B, and their angles, as the overlap was measured.
         Vec2 apart;
         float angleA = 0.0f, angleB = 0.0f;
-        Soft soft;
+        bool againstFixed = false;  // one of the two cannot move: a stiffer spring
         // Its two points solved together (SolvePair): how a push at one
         // moves each, and one over the determinant of that, plain and with
         // both pushes springs.
@@ -324,7 +346,7 @@ private:
         // Prepared once per step, used by every solver pass.
         Vec2 toA, toB, axis, pointBias;
         Vec2 pointImpulse;
-        float k11 = 0.0f, k12 = 0.0f, k22 = 0.0f;
+        float k11 = 0.0f, k12 = 0.0f, k22 = 0.0f, invDet = 0.0f;
         float axialMass = 0.0f;
         float axisMass = 0.0f;
         float axisBias = 0.0f;
@@ -361,11 +383,12 @@ private:
     static Soft MakeSoft(float hertz, float seconds);
     void PrepareContact(Manifold& contact);
     void TakeLastPushes(Manifold& contact);
-    void WarmStart(const Manifold& contact);
     void SolveContact(Manifold& contact, float perSecond, bool pushOut, bool reverse);
-    void SolvePair(Manifold& contact, Body& a, Body& b, float closing1, float closing2, float spring1, float spring2);
+    static void SolvePair(const Manifold& contact, float parting1, float parting2, const Aim& aim1, const Aim& aim2,
+                          float& push1, float& push2);
+    const Soft& SoftOf(const Manifold& contact) const { return contact.againstFixed ? m_SoftAgainstFixed : m_Soft; }
     void Bounce(Manifold& contact);
-    void PrepareJoint(Joint& joint, float dt);
+    void PrepareJoint(Joint& joint, float stepsPerSecond);
     void WarmStartJoint(const Joint& joint);
     void SolveJoint(Joint& joint, float seconds);
     bool IsFast(const Body& body, float dt) const;
@@ -398,8 +421,15 @@ private:
     std::vector<uint32_t> m_Sweep;  // live shapes by min X, kept nearly sorted between steps
     std::vector<Manifold> m_Manifolds;
     std::vector<Manifold> m_LastManifolds;
-    std::vector<uint64_t> m_Touching;  // this step's pairs, sorted
-    std::vector<uint64_t> m_WasTouching;
+    // Last step's contacts in order of their pairs, to find one by.
+    struct LastKey
+    {
+        uint64_t key;
+        uint32_t index;
+    };
+    std::vector<LastKey> m_LastOrder;
+    std::vector<uint64_t> m_Touching;     // the pairs touching, while a step finds and uses them
+    std::vector<uint64_t> m_WasTouching;  // as the last step left them, sorted: what is touching between steps
     // ReportContacts' copies: a callback may destroy bodies, which edits the
     // lists above. Kept, so reporting allocates nothing.
     std::vector<uint64_t> m_ReportNow;

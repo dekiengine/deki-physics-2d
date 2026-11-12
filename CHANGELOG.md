@@ -47,8 +47,7 @@ alongside one that has them.
   whole step carried it a box a pass, and a stack of more than ten stood or
   fell by the rounding of a sum: twenty boxes stood on a desktop and fell on
   an ESP32-S3. Now ten stand however they are set down, twenty with six
-  sub-steps, the same on both. On a T-Deck a step of 30 boxes awake takes
-  2.1 ms, where it took 1.7.
+  sub-steps, the same on both.
 - An overlap is pushed out as a spring would, and the speed that takes is
   taken back in the same sub-step, so it moves the bodies and adds no
   energy. Bodies rest 2.5 to 5 mm into each other; a stack of 20 went to
@@ -60,3 +59,11 @@ alongside one that has them.
   shapes overlap.
 - A joint is set up from where its bodies are in each sub-step. A pendulum
   keeps 97% of its swing over 20 seconds; it kept 90%.
+- A step costs less than it did before sub-steps. On a T-Deck 30 boxes awake
+  take 1.6 ms a step (1.7 before), 10 take 0.35 ms and a chain of 30 hinges
+  0.8 ms (0.9). A pass works on a contact point as four numbers instead of
+  two arms; a body keeps what its contacts hold it with, so a sub-step does
+  not go over the contacts to start from it; last step's contacts are found
+  through a sorted list of their pairs instead of being sorted themselves;
+  a face the other shape is plainly behind is not measured; and no pass
+  divides, which a processor without a divide instruction does slowly.
