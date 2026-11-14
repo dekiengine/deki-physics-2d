@@ -1,0 +1,19 @@
+var NAVTREEINDEX0 =
+{
+"index.html":[],
+"index.html#autotoc_md0":[3,0],
+"index.html#autotoc_md1":[3,1],
+"index.html#c-boxcollider2d":[2,0],
+"index.html#c-capsulecollider2d":[2,1],
+"index.html#c-circlecollider2d":[2,2],
+"index.html#c-distancejoint2d":[2,3],
+"index.html#c-hingejoint2d":[2,4],
+"index.html#c-physics2dsettings":[2,5],
+"index.html#c-polygoncollider2d":[2,6],
+"index.html#c-rigidbody2d":[2,7],
+"index.html#changelog":[3],
+"index.html#component-reference":[2],
+"index.html#components":[0],
+"index.html#feature-flags":[1],
+"pages.html":[]
+};
